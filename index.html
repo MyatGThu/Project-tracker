@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- Lock pinch-zoom ONLY when launched as an installed PWA (standalone),
+       for a native app feel. In a normal browser tab, zoom stays enabled
+       (kept for accessibility). Runs during parse so it applies before paint. -->
+  <script>
+    (function () {
+      var standalone = (window.matchMedia &&
+          (matchMedia('(display-mode: standalone)').matches ||
+           matchMedia('(display-mode: fullscreen)').matches ||
+           matchMedia('(display-mode: minimal-ui)').matches))
+        || window.navigator.standalone === true;
+      if (standalone) {
+        var vp = document.querySelector('meta[name=viewport]');
+        if (vp) vp.setAttribute('content',
+          'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+      }
+    })();
+  </script>
+  <title>Poker Tracker</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0D0D0F" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="Poker" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,500;0,600;0,700;1,500&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── ICON SPRITE (Lucide-style line icons; referenced via <use>) ── -->
+  <svg width="0" height="0" class="svg-sprite" aria-hidden="true" focusable="false" style="position:absolute">
+    <defs>
+      <radialGradient id="chipGold" cx="40%" cy="33%" r="75%">
+        <stop offset="0%" stop-color="#fbe28a"/>
+        <stop offset="55%" stop-color="#eebb3e"/>
+        <stop offset="100%" stop-color="#c8881f"/>
+      </radialGradient>
+    </defs>
+    <!-- Filled poker-chip coin (self-coloured; NOT a line .icon) -->
+    <symbol id="i-poker-chip" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="11" fill="url(#chipGold)"/>
+      <g fill="#0d0d0f">
+        <rect x="10.9" y="-0.3" width="2.2" height="3.8" rx="0.8"/>
+        <rect x="10.9" y="-0.3" width="2.2" height="3.8" rx="0.8" transform="rotate(45 12 12)"/>
+        <rect x="10.9" y="-0.3" width="2.2" height="3.8" rx="0.8" transform="rotate(90 12 12)"/>
+        <rect x="10.9" y="-0.3" width="2.2" height="3.8" rx="0.8" transform="rotate(135 12 12)"/>
+        <rect x="10.9" y="-0.3" width="2.2" height="3.8" rx="0.8" transform="rotate(180 12 12)"/>
+        <rect x="10.9" y="-0.3" width="2.2" height="3.8" rx="0.8" transform="rotate(225 12 12)"/>
+        <rect x="10.9" y="-0.3" width="2.2" height="3.8" rx="0.8" transform="rotate(270 12 12)"/>
+        <rect x="10.9" y="-0.3" width="2.2" height="3.8" rx="0.8" transform="rotate(315 12 12)"/>
+      </g>
+      <circle cx="12" cy="12" r="7.1" fill="none" stroke="#7a5410" stroke-width="1.1" stroke-dasharray="1.3 1.5"/>
+      <text x="12" y="15.2" font-size="8" font-weight="700" text-anchor="middle" fill="#7a5410" font-family="Georgia, 'Times New Roman', serif">$</text>
+    </symbol>
+    <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></symbol>
+    <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></symbol>
+    <symbol id="i-dice" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.2"/><circle cx="15.5" cy="8.5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="8.5" cy="15.5" r="1.2"/><circle cx="15.5" cy="15.5" r="1.2"/></symbol>
+    <symbol id="i-bar-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="7" rx="0.5"/><rect x="12.5" y="7" width="3" height="11" rx="0.5"/><rect x="18" y="4" width="3" height="14" rx="0.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-coins" viewBox="0 0 24 24"><circle cx="8" cy="8" r="5"/><path d="M14.8 3.6a5 5 0 0 1 0 16.8"/><path d="M7 6h1.5v4"/></symbol>
+    <symbol id="i-trending-up" viewBox="0 0 24 24"><path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/></symbol>
+    <symbol id="i-trending-down" viewBox="0 0 24 24"><path d="M16 17h6v-6"/><path d="m22 17-8.5-8.5-5 5L2 7"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4"/><path d="M16 2v4"/><path d="M3 10h18"/></symbol>
+    <symbol id="i-calendar-plus" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4"/><path d="M16 2v4"/><path d="M3 10h18"/><path d="M12 14v4"/><path d="M10 16h4"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="1"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M12 6h.01"/><path d="M16 6h.01"/><path d="M8 10h.01"/><path d="M12 10h.01"/><path d="M16 10h.01"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></symbol>
+    <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M18 4l3 3-3 3"/><path d="M18 14l3 3-3 3"/><path d="M3 7h3.2a4 4 0 0 1 3.3 1.7l4 5.6a4 4 0 0 0 3.3 1.7H21"/><path d="M3 17h3.2a4 4 0 0 0 3.3-1.7"/><path d="M14.2 8.7A4 4 0 0 1 17.5 7H21"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></symbol>
+    <symbol id="i-rotate-ccw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4v16l13-8Z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-crown" viewBox="0 0 24 24"><path d="M2 18h20"/><path d="M3 7l5 4 4-7 4 7 5-4-2 11H5L3 7Z"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9 21v-6h6v6"/></symbol>
+  </svg>
+
+  <!-- ── AMBIENT CARD BACKGROUND (face cards shuffle/float; built in app.js) ── -->
+  <div id="card-bg" aria-hidden="true"></div>
+
+  <!-- ── LOCK SCREEN ──────────────────────────────────────────── -->
+  <div id="lock-screen" class="hidden">
+    <div class="lock-content">
+      <div class="lock-brand">
+        <span class="lock-suit">♠</span>
+        <h1 class="lock-title">Poker Tracker</h1>
+      </div>
+      <p class="lock-subtitle">Enter password to continue</p>
+      <div class="lock-form">
+        <input id="lock-password" type="password" placeholder="Password"
+               class="input lock-input" autocomplete="off" />
+        <button id="lock-submit" class="btn btn-primary lock-btn">Unlock</button>
+      </div>
+      <p id="lock-error" class="lock-error hidden">Incorrect password</p>
+    </div>
+  </div>
+
+  <!-- ── MODE SELECTOR ────────────────────────────────────────── -->
+  <div id="mode-select" class="hidden">
+    <div class="mode-select-content">
+      <div class="mode-select-brand">
+        <span class="mode-select-suit">♠</span>
+        <h2 class="mode-select-title">Choose Your Game</h2>
+        <p class="mode-select-sub">You can switch modes anytime from the dashboard</p>
+      </div>
+      <div class="mode-cards">
+        <button class="mode-card mode-card-home" data-mode="home">
+          <span class="mode-card-icon"><svg class="icon"><use href="#i-home"/></svg></span>
+          <span class="mode-card-name">Home Game</span>
+          <span class="mode-card-desc">Private games with friends — buy-ins, settlements &amp; leaderboards</span>
+        </button>
+        <button class="mode-card mode-card-casino" data-mode="casino">
+          <span class="mode-card-icon"><svg class="icon"><use href="#i-dice"/></svg></span>
+          <span class="mode-card-name">Casino</span>
+          <span class="mode-card-desc">Track casino visits — wins, losses &amp; game performance</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SPLASH ─────────────────────────────────────────────── -->
+  <div id="splash">
+    <div class="splash-content">
+      <div class="splash-brand">
+        <span class="splash-suit">♠</span>
+        <span class="splash-name">Poker Tracker</span>
+      </div>
+      <div class="rf-hand" id="rf-hand">
+        <div class="playing-card" style="--rot:-14deg;--lift:-12px">
+          <div class="pc-corner tl"><div class="pc-rank">A</div><div class="pc-suit">♠</div></div>
+          <div class="pc-mid">♠</div>
+          <div class="pc-corner br"><div class="pc-rank">A</div><div class="pc-suit">♠</div></div>
+        </div>
+        <div class="playing-card" style="--rot:-7deg;--lift:-5px">
+          <div class="pc-corner tl"><div class="pc-rank">K</div><div class="pc-suit">♠</div></div>
+          <div class="pc-mid">♠</div>
+          <div class="pc-corner br"><div class="pc-rank">K</div><div class="pc-suit">♠</div></div>
+        </div>
+        <div class="playing-card" style="--rot:0deg;--lift:0px">
+          <div class="pc-corner tl"><div class="pc-rank">Q</div><div class="pc-suit">♠</div></div>
+          <div class="pc-mid">♠</div>
+          <div class="pc-corner br"><div class="pc-rank">Q</div><div class="pc-suit">♠</div></div>
+        </div>
+        <div class="playing-card" style="--rot:7deg;--lift:-5px">
+          <div class="pc-corner tl"><div class="pc-rank">J</div><div class="pc-suit">♠</div></div>
+          <div class="pc-mid">♠</div>
+          <div class="pc-corner br"><div class="pc-rank">J</div><div class="pc-suit">♠</div></div>
+        </div>
+        <div class="playing-card" style="--rot:14deg;--lift:-12px">
+          <div class="pc-corner tl"><div class="pc-rank">10</div><div class="pc-suit">♠</div></div>
+          <div class="pc-mid">♠</div>
+          <div class="pc-corner br"><div class="pc-rank">10</div><div class="pc-suit">♠</div></div>
+        </div>
+      </div>
+      <div class="rf-label" id="rf-label">Royal Flush</div>
+      <div class="splash-bar-track">
+        <div class="splash-bar-fill" id="splash-bar"></div>
+      </div>
+      <div class="splash-subtext" id="splash-subtext">Shuffling the deck…</div>
+    </div>
+  </div>
+
+  <div id="app">
+
+    <!-- ── DASHBOARD VIEW ──────────────────────────────────────── -->
+    <div id="view-dashboard" class="view active">
+      <header class="home-header">
+        <div class="home-header-title">
+          <span class="suit-deco">◆</span>
+          <h1>Dashboard</h1>
+        </div>
+        <div class="home-header-actions">
+          <button id="btn-switch-to-casino" class="btn btn-ghost btn-sm" title="Casino mode" aria-label="Switch to casino mode"><svg class="icon"><use href="#i-dice"/></svg></button>
+          <button id="btn-new-session-dash" class="btn btn-primary">+ New</button>
+        </div>
+      </header>
+      <div id="dash-leader" class="dash-leader-card"></div>
+      <div id="dash-hell" class="dash-stat-card dash-hell-card"></div>
+      <div class="dash-stats-row">
+        <div class="dash-stat-card dash-stat-win">
+          <p class="dash-stat-label"><svg class="icon"><use href="#i-trophy"/></svg> Best Win</p>
+          <div id="dash-top-win"></div>
+        </div>
+        <div class="dash-stat-card dash-stat-loss">
+          <p class="dash-stat-label"><svg class="icon"><use href="#i-trending-down"/></svg> Worst Loss</p>
+          <div id="dash-top-loss"></div>
+        </div>
+      </div>
+      <div class="dash-stats-row">
+        <div class="dash-stat-card dash-stat-win">
+          <p class="dash-stat-label"><svg class="icon"><use href="#i-trending-up"/></svg> Highest Win-Streak</p>
+          <div id="dash-win-streak"></div>
+        </div>
+        <div class="dash-stat-card dash-stat-loss">
+          <p class="dash-stat-label"><svg class="icon"><use href="#i-trending-down"/></svg> Longest Losing Streak</p>
+          <div id="dash-loss-streak"></div>
+        </div>
+      </div>
+      <div id="dash-pot" class="dash-stat-card dash-pot-card"></div>
+      <div class="dash-stats-row">
+        <div class="dash-stat-card">
+          <p class="dash-stat-label"><svg class="icon"><use href="#i-trending-down"/></svg> Paid the Most</p>
+          <div id="dash-top-payer"></div>
+        </div>
+        <div class="dash-stat-card">
+          <p class="dash-stat-label"><svg class="icon"><use href="#i-bar-chart"/></svg> Highest Avg</p>
+          <div id="dash-avg-payer"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SESSIONS VIEW ──────────────────────────────────────── -->
+    <div id="view-sessions" class="view">
+      <header class="home-header">
+        <div class="home-header-title">
+          <span class="suit-deco">♠</span>
+          <h1>Sessions</h1>
+        </div>
+        <button id="btn-new-session" class="btn btn-primary">+ New</button>
+      </header>
+      <div class="sessions-search-wrap">
+        <input id="sessions-search" type="text" placeholder="Search sessions…" class="input" autocomplete="off" />
+      </div>
+      <div id="sessions-list" class="sessions-list">
+        <p class="empty-state">No sessions yet. Start a new game!</p>
+      </div>
+    </div>
+
+    <!-- ── RECORDS VIEW ───────────────────────────────────────── -->
+    <div id="view-records" class="view">
+      <header class="home-header">
+        <div class="home-header-title">
+          <span class="suit-deco">★</span>
+          <h1>Records</h1>
+        </div>
+      </header>
+
+      <nav class="sub-tab-nav">
+        <button class="sub-tab active" data-sub="rec-main">Records</button>
+        <button class="sub-tab" data-sub="rec-avg">Averages</button>
+      </nav>
+
+      <!-- Records sub-tab -->
+      <div id="rec-main">
+        <div class="lb-record-section">
+          <p class="lb-record-title"><svg class="icon"><use href="#i-coins"/></svg> Most Money Won</p>
+          <p class="lb-record-desc">Sum of winning sessions only — losses not counted</p>
+          <div id="lb-total-won" class="lb-records"></div>
+        </div>
+        <div class="lb-record-section">
+          <p class="lb-record-title"><svg class="icon"><use href="#i-trophy"/></svg> Biggest Single Session Win</p>
+          <p class="lb-record-desc">Record holder — highest net gain in one game night</p>
+          <div id="lb-biggest-win" class="lb-records"></div>
+        </div>
+        <div class="lb-record-section">
+          <p class="lb-record-title"><svg class="icon"><use href="#i-trending-down"/></svg> Biggest Single Session Loss</p>
+          <p class="lb-record-desc">Record holder — worst net loss in one game night</p>
+          <div id="lb-biggest-loss" class="lb-records"></div>
+        </div>
+        <div class="lb-record-section">
+          <p class="lb-record-title"><svg class="icon"><use href="#i-calendar"/></svg> Most Sessions Attended</p>
+          <p class="lb-record-desc">Who shows up the most — total sessions played</p>
+          <div id="lb-attendance" class="lb-records"></div>
+        </div>
+        <div class="lb-record-section">
+          <p class="lb-record-title"><svg class="icon"><use href="#i-target"/></svg> Most Consistent</p>
+          <p class="lb-record-desc">Lowest variance in results — minimum 3 sessions required</p>
+          <div id="lb-consistent" class="lb-records"></div>
+        </div>
+      </div>
+
+      <!-- Averages sub-tab -->
+      <div id="rec-avg" class="hidden">
+        <div class="lb-record-section">
+          <p class="lb-record-title"><svg class="icon"><use href="#i-bar-chart"/></svg> Avg Net Per Session</p>
+          <p class="lb-record-desc">Total net ÷ sessions played — most consistent performer</p>
+          <div id="lb-avg-net" class="lb-records"></div>
+        </div>
+        <div class="lb-record-section">
+          <p class="lb-record-title"><svg class="icon"><use href="#i-trending-up"/></svg> Avg Win Per Session</p>
+          <p class="lb-record-desc">Total winnings ÷ winning sessions — how much they typically take home</p>
+          <div id="lb-avg-win" class="lb-records"></div>
+        </div>
+        <div class="lb-record-section">
+          <p class="lb-record-title"><svg class="icon"><use href="#i-trending-down"/></svg> Avg Loss Per Session</p>
+          <p class="lb-record-desc">Total losses ÷ losing sessions — how much they typically drop</p>
+          <div id="lb-avg-loss" class="lb-records"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── LEADERBOARD VIEW ───────────────────────────────────── -->
+    <div id="view-leaderboard" class="view">
+      <header class="home-header">
+        <div class="home-header-title">
+          <span class="suit-deco">◈</span>
+          <h1>Leaderboard</h1>
+        </div>
+      </header>
+      <nav class="sub-tab-nav">
+        <button class="sub-tab active" data-lb-sub="lb-rankings">Rankings</button>
+        <button class="sub-tab" data-lb-sub="lb-chart">P&amp;L Chart</button>
+      </nav>
+      <div id="lb-rankings">
+        <div id="leaderboard-list" class="leaderboard-list">
+          <p class="empty-state">No settled sessions yet.</p>
+        </div>
+      </div>
+      <div id="lb-chart" class="hidden">
+        <div class="chart-wrap">
+          <canvas id="pl-chart-canvas"></canvas>
+        </div>
+        <div id="pl-legend" class="pl-legend"></div>
+      </div>
+    </div>
+
+    <!-- ── SESSION DETAIL ─────────────────────────────────────── -->
+    <div id="view-session" class="view">
+      <header>
+        <button class="btn btn-ghost icon-btn" id="btn-back-home" aria-label="Back to home"><svg class="icon"><use href="#i-arrow-left"/></svg></button>
+        <div class="header-center">
+          <div class="session-title-row">
+            <h2 id="session-title">Session</h2>
+            <button class="btn-rename-inline" id="btn-rename-session" title="Rename session" aria-label="Rename session"><svg class="icon"><use href="#i-pencil"/></svg></button>
+          </div>
+          <div class="session-header-meta">
+            <span id="session-date" class="session-date"></span>
+            <span id="session-timer" class="session-timer hidden"></span>
+          </div>
+        </div>
+        <button id="btn-settle" class="btn btn-primary">Settle Up</button>
+      </header>
+      <textarea id="session-notes-input" class="input session-notes-input"
+                placeholder="Add a note… venue, game type, etc." rows="2"></textarea>
+      <button id="btn-open-picker" class="btn btn-primary btn-block">+ Select Players</button>
+      <button id="btn-randomize-seats" class="btn btn-ghost btn-block hidden"><svg class="icon"><use href="#i-shuffle"/></svg> Randomize Seats</button>
+      <button id="btn-blinds-timer" class="btn btn-ghost btn-block"><svg class="icon"><use href="#i-clock"/></svg> Blinds Timer</button>
+      <div id="rebuy-pill-wrap" class="rebuy-pill-wrap hidden">
+        <span class="rebuy-pill-label">Quick rebuy</span>
+        <button id="btn-set-rebuy" class="rebuy-pill-btn">$<span id="rebuy-amount-display">20</span> <svg class="icon"><use href="#i-pencil"/></svg></button>
+      </div>
+      <div id="session-pot-bar" class="session-pot-bar hidden">
+        <span class="pot-bar-label">♣ Live Pot</span>
+        <span id="session-live-pot" class="pot-bar-amount">$0</span>
+      </div>
+      <div id="dealer-tip" class="dealer-tip hidden">
+        <span class="dealer-tip-icon">♠♠</span>
+        <span class="dealer-tip-text">6+ players — consider using <strong>2 dealers</strong> to keep the game moving</span>
+        <button id="dealer-tip-dismiss" class="dealer-tip-dismiss" title="Dismiss" aria-label="Dismiss dealer tip"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div id="players-list" class="players-list">
+        <p class="empty-state">Select players above to start tracking.</p>
+      </div>
+    </div>
+
+    <!-- ── SETTLE ─────────────────────────────────────────────── -->
+    <div id="view-settle" class="view">
+      <header>
+        <button class="btn btn-ghost icon-btn" id="btn-back-session" aria-label="Back to session"><svg class="icon"><use href="#i-arrow-left"/></svg></button>
+        <div class="header-center"><h2>Settle Up</h2></div>
+        <button id="btn-confirm-settle" class="btn btn-primary">Confirm</button>
+      </header>
+      <p class="settle-hint">Enter each player's final chip count.</p>
+      <div id="settle-list" class="settle-list"></div>
+      <div id="settle-balance" class="settle-balance hidden"></div>
+    </div>
+
+    <!-- ── RESULTS ────────────────────────────────────────────── -->
+    <div id="view-results" class="view">
+      <header>
+        <button class="btn btn-ghost icon-btn" id="btn-back-results-home" aria-label="Back to home"><svg class="icon"><use href="#i-arrow-left"/></svg></button>
+        <div class="header-center">
+          <h2>Results</h2>
+          <span id="results-session-name" class="session-date"></span>
+        </div>
+        <button id="btn-share-results" class="btn btn-ghost icon-btn" title="Share results" aria-label="Share results"><svg class="icon"><use href="#i-share"/></svg></button>
+      </header>
+      <div id="results-list" class="results-list"></div>
+      <div class="section-block">
+        <div class="section-header-row">
+          <p class="section-label">♦ Settlements</p>
+          <button id="btn-copy-settlements" class="btn-copy-settlements">Copy</button>
+        </div>
+        <div id="settlements-list"></div>
+      </div>
+      <div id="balance-check" class="balance-check hidden"></div>
+      <div class="pot-summary">
+        <span class="pot-label">♣ Total Pot</span>
+        <span id="results-pot" class="pot-amount">$0</span>
+      </div>
+      <button id="btn-reopen-session" class="btn btn-ghost btn-block btn-reopen"><svg class="icon"><use href="#i-rotate-ccw"/></svg> Re-open Session</button>
+    </div>
+
+    <!-- ── CASINO DASHBOARD ──────────────────────────────────── -->
+    <div id="view-casino-dashboard" class="view">
+      <header class="home-header">
+        <div class="home-header-title">
+          <span class="suit-deco">◆</span>
+          <h1>Casino</h1>
+        </div>
+        <button id="btn-switch-to-home" class="btn btn-ghost btn-sm"><svg class="icon"><use href="#i-home"/></svg> Home</button>
+      </header>
+      <nav class="sub-tab-nav">
+        <button class="sub-tab active" data-period="all">All Time</button>
+        <button class="sub-tab" data-period="year">This Year</button>
+        <button class="sub-tab" data-period="month">This Month</button>
+      </nav>
+      <div id="casino-next-trip" class="hidden"></div>
+      <div id="casino-dash-content"></div>
+      <button id="btn-schedule-trip" class="btn btn-ghost btn-block"><svg class="icon"><use href="#i-calendar-plus"/></svg> Schedule Next Trip</button>
+      <button id="btn-new-visit" class="btn btn-primary btn-block">+ Log a Visit</button>
+    </div>
+
+    <!-- ── CASINO VISITS ─────────────────────────────────────── -->
+    <div id="view-casino-visits" class="view">
+      <header class="home-header">
+        <div class="home-header-title">
+          <span class="suit-deco">♣</span>
+          <h1>Visits</h1>
+        </div>
+        <button id="btn-new-visit-2" class="btn btn-primary">+ New</button>
+      </header>
+      <div id="casino-visits-list" class="sessions-list">
+        <p class="empty-state">No visits logged yet.</p>
+      </div>
+    </div>
+
+    <!-- ── CASINO STATS ──────────────────────────────────────── -->
+    <div id="view-casino-stats" class="view">
+      <header class="home-header">
+        <div class="home-header-title">
+          <span class="suit-deco">★</span>
+          <h1>Stats</h1>
+        </div>
+      </header>
+      <nav class="sub-tab-nav">
+        <button class="sub-tab active" data-period="all">All Time</button>
+        <button class="sub-tab" data-period="year">This Year</button>
+        <button class="sub-tab" data-period="month">This Month</button>
+      </nav>
+      <div id="casino-stats-content"></div>
+    </div>
+
+    <!-- ── CASINO TIMER ───────────────────────────────────────── -->
+    <div id="view-casino-timer" class="view">
+      <header class="home-header">
+        <div class="home-header-title">
+          <button class="btn btn-ghost icon-btn hidden" id="btn-back-timer" aria-label="Back"><svg class="icon"><use href="#i-arrow-left"/></svg></button>
+          <span class="suit-deco"><svg class="icon"><use href="#i-clock"/></svg></span>
+          <h1>Blinds Timer</h1>
+        </div>
+      </header>
+      <div class="timer-content">
+        <div class="timer-display">
+          <div class="timer-level-label">Level <span id="timer-level-num">1</span></div>
+          <div class="timer-blinds" id="timer-current-blinds">5 / 10</div>
+          <div id="timer-countdown" class="timer-countdown">05:00</div>
+          <div class="timer-next-wrap">
+            <span class="timer-next-label">Next level:</span>
+            <span id="timer-next-blinds" class="timer-next-blinds">10 / 20</span>
+          </div>
+        </div>
+        <div class="timer-controls">
+          <button id="timer-prev" class="btn btn-ghost"><svg class="icon"><use href="#i-chevron-left"/></svg> Prev</button>
+          <button id="timer-toggle" class="btn btn-primary timer-toggle-btn"><svg class="icon"><use href="#i-play"/></svg> Start</button>
+          <button id="timer-next-btn" class="btn btn-ghost">Next <svg class="icon"><use href="#i-chevron-right"/></svg></button>
+        </div>
+        <div class="timer-settings">
+          <button id="timer-reset" class="btn btn-ghost btn-sm"><svg class="icon"><use href="#i-rotate-ccw"/></svg> Reset Level</button>
+          <div class="timer-duration-wrap">
+            <span class="timer-duration-label">Level duration</span>
+            <select id="timer-duration" class="input timer-duration-select">
+              <option value="60">1 min</option>
+              <option value="120">2 min</option>
+              <option value="180">3 min</option>
+              <option value="300" selected>5 min</option>
+              <option value="600">10 min</option>
+              <option value="900">15 min</option>
+              <option value="1200">20 min</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── BOTTOM NAV ─────────────────────────────────────────── -->
+  <nav id="bottom-nav" class="bottom-nav">
+    <button class="nav-btn active" data-view="dashboard">
+      <svg class="icon nav-icon"><use href="#i-dashboard"/></svg>
+      <span class="nav-label">Dashboard</span>
+    </button>
+    <button class="nav-btn" data-view="sessions">
+      <svg class="icon nav-icon"><use href="#i-layers"/></svg>
+      <span class="nav-label">Sessions</span>
+    </button>
+    <button class="nav-btn" data-view="records">
+      <svg class="icon nav-icon"><use href="#i-list"/></svg>
+      <span class="nav-label">Records</span>
+    </button>
+    <button class="nav-btn" data-view="leaderboard">
+      <svg class="icon nav-icon"><use href="#i-trophy"/></svg>
+      <span class="nav-label">Leaderboard</span>
+    </button>
+  </nav>
+
+  <!-- ── MODALS ─────────────────────────────────────────────── -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Add Buy-in</h3>
+        <p id="modal-player-label" class="modal-label"></p>
+      </div>
+      <div class="input-with-prefix">
+        <span class="input-prefix">$</span>
+        <input id="modal-buyin-amount" type="number" inputmode="decimal" placeholder="0" class="input input-prefixed" min="1" />
+      </div>
+      <div class="modal-actions modal-actions-split">
+        <button id="modal-remove-buyin" class="btn btn-danger hidden">Remove</button>
+        <div class="modal-actions-right">
+          <button id="modal-cancel" class="btn btn-ghost">Cancel</button>
+          <button id="modal-confirm" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-new-session" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>New Session</h3>
+        <p class="modal-label">Name this game night.</p>
+      </div>
+      <input id="input-session-name" type="text" placeholder="e.g. Friday Night" class="input" />
+      <input id="input-session-date" type="date" class="input" />
+      <div class="modal-actions">
+        <button id="modal-new-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="modal-new-confirm" class="btn btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Blinds Preset Modal -->
+  <div id="modal-blinds" class="modal-overlay hidden">
+    <div class="modal modal-blinds">
+      <div class="modal-header">
+        <h3>Select Blind Level</h3>
+        <p class="modal-label">Sets the default buy-in for all players</p>
+      </div>
+      <div id="blinds-preset-list" class="blinds-presets"></div>
+      <div class="modal-actions">
+        <button id="blinds-skip" class="btn btn-ghost">Enter manually</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-picker" class="modal-overlay hidden">
+    <div class="modal modal-picker">
+      <div class="modal-header">
+        <h3>Who's Playing?</h3>
+        <p class="modal-label">Tap to select · set each buy-in below</p>
+      </div>
+      <div id="roster-chips" class="roster-chips"></div>
+      <div id="picker-buyins" class="picker-buyins"></div>
+      <div class="add-to-roster">
+        <input id="new-roster-input" type="text" placeholder="Add new player to roster…" class="input" />
+        <button id="btn-add-roster" class="btn btn-ghost">Add</button>
+      </div>
+      <div class="modal-actions">
+        <button id="picker-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="picker-confirm" class="btn btn-primary">Add to Session</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-delete" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Delete Session</h3>
+        <p id="modal-delete-label" class="modal-label">This will permanently remove the session and all its data.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="modal-delete-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="modal-delete-confirm" class="btn btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Player History Modal -->
+  <div id="modal-player-history" class="modal-overlay hidden">
+    <div class="modal modal-player-history">
+      <div class="modal-header">
+        <h3 id="player-history-name">Player</h3>
+        <p class="modal-label" id="player-history-summary"></p>
+      </div>
+      <div id="player-history-list" class="player-history-list"></div>
+      <div class="modal-actions">
+        <button id="player-history-close" class="btn btn-ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settle Confirmation Modal -->
+  <div id="modal-settle-confirm" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Settle Up?</h3>
+        <p class="modal-label">This locks the session. You can re-open it from the results screen if needed.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="settle-confirm-cancel" class="btn btn-ghost">Not yet</button>
+        <button id="settle-confirm-ok" class="btn btn-primary">Let's go <svg class="icon"><use href="#i-check"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settle Balance Warning Modal -->
+  <div id="modal-settle-warn" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Chips don't reconcile</h3>
+        <p class="modal-label" id="settle-warn-text"></p>
+      </div>
+      <div class="modal-actions">
+        <button id="settle-warn-cancel" class="btn btn-ghost">Go back</button>
+        <button id="settle-warn-ok" class="btn btn-primary">Settle anyway</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Re-open Confirmation Modal -->
+  <div id="modal-reopen-confirm" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Re-open Session?</h3>
+        <p class="modal-label">All chip counts will be cleared and the session returns to active.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="reopen-confirm-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="reopen-confirm-ok" class="btn btn-primary">Re-open</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Set Rebuy Amount Modal -->
+  <div id="modal-set-rebuy" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Quick Rebuy Amount</h3>
+        <p class="modal-label">Default applies to all players in this session</p>
+      </div>
+      <div class="input-with-prefix">
+        <span class="input-prefix">$</span>
+        <input id="input-rebuy-amount" type="number" inputmode="decimal" placeholder="20" class="input input-prefixed" min="1" />
+      </div>
+      <div class="modal-actions">
+        <button id="rebuy-amount-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="rebuy-amount-confirm" class="btn btn-primary">Set</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Casino Visit Modal -->
+  <div id="modal-casino-visit" class="modal-overlay hidden">
+    <div class="modal modal-casino-visit">
+      <div class="modal-header">
+        <h3 id="casino-visit-modal-title">Log Visit</h3>
+        <p class="modal-label">Record your casino session</p>
+      </div>
+      <input id="visit-casino-name" type="text" placeholder="Casino name e.g. Crown Casino" class="input" />
+      <input id="visit-date" type="date" class="input" />
+      <div class="visit-amounts-row">
+        <div class="input-with-prefix">
+          <span class="input-prefix">$</span>
+          <input id="visit-buy-in" type="number" inputmode="decimal" placeholder="Buy-in" class="input input-prefixed" min="1" />
+        </div>
+        <div class="input-with-prefix">
+          <span class="input-prefix">$</span>
+          <input id="visit-cash-out" type="number" inputmode="decimal" placeholder="Cash out" class="input input-prefixed" min="0" />
+        </div>
+      </div>
+      <div class="games-section">
+        <p class="games-label">Games played</p>
+        <div class="games-chips" id="games-chips">
+          <button class="game-chip" data-game="poker">Poker</button>
+          <button class="game-chip" data-game="blackjack">Blackjack</button>
+          <button class="game-chip" data-game="roulette">Roulette</button>
+          <button class="game-chip" data-game="baccarat">Baccarat</button>
+          <button class="game-chip" data-game="slots">Slots</button>
+          <button class="game-chip" data-game="craps">Craps</button>
+        </div>
+      </div>
+      <textarea id="visit-notes-input" class="input visit-notes-input" placeholder="Notes (optional)" rows="2"></textarea>
+      <div class="modal-actions modal-actions-split">
+        <button id="casino-visit-delete" class="btn btn-danger hidden">Delete</button>
+        <div class="modal-actions-right">
+          <button id="casino-visit-cancel" class="btn btn-ghost">Cancel</button>
+          <button id="casino-visit-confirm" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule Next Casino Trip Modal -->
+  <div id="modal-schedule-trip" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3><svg class="icon"><use href="#i-calendar-plus"/></svg> Next Casino Trip</h3>
+        <p class="modal-label">Plan your next visit</p>
+      </div>
+      <input id="trip-casino-name" type="text" placeholder="Casino name" class="input" />
+      <input id="trip-date" type="date" class="input" />
+      <div class="modal-actions modal-actions-split">
+        <button id="trip-clear" class="btn btn-ghost">Clear</button>
+        <div class="modal-actions-right">
+          <button id="trip-cancel" class="btn btn-ghost">Cancel</button>
+          <button id="trip-confirm" class="btn btn-primary">Schedule</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Seat Randomizer Modal -->
+  <div id="modal-seats" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3><svg class="icon"><use href="#i-shuffle"/></svg> Seat Draw</h3>
+        <p class="modal-label">Random assignments for this session</p>
+      </div>
+      <div id="seats-list" class="seats-list"></div>
+      <div class="modal-actions modal-actions-split">
+        <button id="btn-reshuffle" class="btn btn-ghost"><svg class="icon"><use href="#i-shuffle"/></svg> Reshuffle</button>
+        <button id="btn-seats-close" class="btn btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PWA install banner (Android/Chrome — iOS uses Share → Add to Home Screen) -->
+  <div id="install-banner" class="install-banner hidden">
+    <span class="install-icon">♠</span>
+    <span class="install-text">Install Poker Tracker for the full app experience</span>
+    <button id="install-accept" class="install-accept">Install</button>
+    <button id="install-dismiss" class="install-dismiss" title="Dismiss" aria-label="Dismiss install banner"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="config.js"></script>
+  <script src="settlement.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

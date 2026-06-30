@@ -1,0 +1,12 @@
+{
+  "name": "poker-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Poker Tracker — home game & casino money tracker",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

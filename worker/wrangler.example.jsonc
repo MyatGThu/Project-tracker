@@ -1,0 +1,19 @@
+/**
+ * Copy this file to wrangler.jsonc and fill in your own database_id
+ * (printed when you run: wrangler d1 create poker-tracker).
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "poker-tracker-api",
+  "main": "src/index.js",
+  "compatibility_date": "2024-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "poker-tracker",
+      "database_id": "PASTE_YOUR_DATABASE_ID_HERE"
+    }
+  ]
+}

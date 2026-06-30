@@ -1,0 +1,21 @@
+# config.js is safe to commit — no longer contains secrets
+
+# node / test tooling
+node_modules/
+coverage/
+
+# sale package output
+poker-tracker-*.zip
+.pkg_stage/
+
+# wrangler files
+.wrangler
+worker/wrangler.jsonc
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+
+# AI agent local state is ignored, EXCEPT vendored skills we intentionally ship
+.claude/*
+!.claude/skills/
