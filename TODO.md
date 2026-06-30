@@ -12,15 +12,24 @@ not just priority — earlier phases unblock later ones.
 > visitor with the URL sees the same sessions/players (`/api/*` is unauthenticated).
 > This phase makes data belong to someone — and must land *before* auth is useful.
 
-- [ ] Decide the ownership unit: **per-group** (a poker crew shares one ledger) is
+- [x] Decide the ownership unit: **per-group** (a poker crew shares one ledger) is
       almost certainly right for this app, not per-individual. This drives everything below.
-- [ ] Schema: add `users`, `groups`, `group_members` (role per member), and `invites`
+      → encoded in the schema: `groups` is the owning entity; `sessions`/`casino_visits`
+      carry `group_id`, and users join groups via `group_members`.
+- [x] Schema: add `users`, `groups`, `group_members` (role per member), and `invites`
       tables to `worker/schema.sql`. Write a migration, not a destructive recreate.
-- [ ] Add `group_id` (and/or `user_id`) to `sessions` and `casino_visits` as a
+      → `worker/migrations/0001_multitenant.sql` (run-once, non-destructive) + the same
+      shape mirrored into `schema.sql` for fresh installs.
+- [x] Add `group_id` (and/or `user_id`) to `sessions` and `casino_visits` as a
       **nullable** column first so existing rows keep working; backfill, then enforce.
+      → added nullable in migration 0001; legacy rows keep `group_id IS NULL`.
+      Backfill + `NOT NULL` enforcement deferred until the query-scoping step below lands.
 - [ ] Scope **every** query in `worker/src/index.js` by the caller's group — reads and
       writes. This is the bulk of the effort and the easy thing to get subtly wrong.
+      ⚠ blocked on Phase 2: the Worker has no way to know the caller's group until auth
+      provides a verified identity. Tackle alongside the auth integration.
 - [ ] Invite flow: generate a link/code that adds a user to a group.
+      → `invites` table is in place; the accept/generate endpoints come with auth.
 
 ## Phase 2 — Authentication & accounts
 
