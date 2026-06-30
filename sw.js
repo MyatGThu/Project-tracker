@@ -5,7 +5,7 @@
    API requests (cross-origin Worker) are never intercepted.
    ───────────────────────────────────────────────────────────── */
 
-const CACHE = 'poker-tracker-v23';
+const CACHE = 'poker-tracker-v24';
 const SHELL = [
   './',
   './index.html',

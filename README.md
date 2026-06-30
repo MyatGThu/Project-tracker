@@ -33,6 +33,11 @@ A polished, installable web app for tracking **home poker games** and **casino v
 
 ---
 
+## 🗺️ Roadmap & contributor docs
+
+- **[TODO.md](TODO.md)** — roadmap: multi-tenant data model → real accounts/auth (social sign-in) → optional Azure hosting, plus polish items.
+- **[CLAUDE.md](CLAUDE.md)** — architecture notes & commands for working in this codebase (no build step, view system, Worker API, money-math core, gotchas).
+
 ## 🧱 Tech stack
 
 | Layer | Technology |
