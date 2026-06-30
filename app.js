@@ -2861,6 +2861,7 @@ function buildCardBg() {
 
 function boot() {
   document.body.classList.toggle('role-user', !isAdmin()); // gate destructive UI
+  wireAccountButtons();                                     // reveal account UI in Auth0 mode
   buildCardBg();
   applyCurrency();
   initSplash(() => {
@@ -3000,18 +3001,123 @@ document.getElementById('lock-auth0-btn')?.addEventListener('click', async () =>
   }
 });
 
+/* ── Account / groups (multi-user mode) ───────────────────────────
+   All inert in password mode — the account buttons stay hidden and these
+   handlers are never reached. */
+function wireAccountButtons() {
+  const show = authMode() === 'auth0';
+  document.querySelectorAll('.account-btn').forEach(b => b.classList.toggle('hidden', !show));
+}
+
+async function openAccountModal() {
+  const { data } = await api('/me');
+  if (!data) { toast('Could not load account', 'error'); return; }
+  document.getElementById('account-identity').textContent =
+    (data.name || data.email || 'Signed in') + (data.name && data.email ? ` · ${data.email}` : '');
+
+  const wrap = document.getElementById('account-groups');
+  wrap.innerHTML = '';
+  const activeId = data.group && data.group.id;
+  for (const g of data.groups || []) {
+    const isActive = g.id === activeId;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-ghost btn-block account-group' + (isActive ? ' active' : '');
+    btn.textContent = `${g.name} · ${g.role}${isActive ? '  (current)' : ''}`;
+    btn.disabled = isActive;
+    if (!isActive) btn.addEventListener('click', () => switchGroup(g.id));
+    wrap.appendChild(btn);
+  }
+
+  const canInvite = data.group && (data.group.role === 'owner' || data.group.role === 'admin');
+  document.getElementById('account-invite-wrap').classList.toggle('hidden', !canInvite);
+  const out = document.getElementById('account-invite-out');
+  out.classList.add('hidden'); out.value = '';
+
+  document.getElementById('modal-account').classList.remove('hidden');
+}
+
+async function switchGroup(id) {
+  activeGroupId = id;
+  localStorage.setItem('poker_group', id);
+  document.getElementById('modal-account').classList.add('hidden');
+  await syncIdentity();                                   // refresh role for the new group
+  document.body.classList.toggle('role-user', !isAdmin());
+  loadDashboard();
+  loadRoster();
+  if (currentMode === 'casino') loadCasinoDashboard();
+  toast('Switched group', 'success');
+}
+
+async function generateInvite() {
+  const btn = document.getElementById('account-invite-btn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  const { data, error } = await api('/invites', 'POST', { role: 'member' });
+  btn.disabled = false; btn.textContent = 'Create invite link';
+  if (!data || !data.code) { toast(error?.message || 'Could not create invite', 'error'); return; }
+  const link = `${location.origin}${location.pathname}?invite=${data.code}`;
+  const out = document.getElementById('account-invite-out');
+  out.value = link; out.classList.remove('hidden'); out.focus(); out.select();
+  try { await navigator.clipboard.writeText(link); toast('Invite link copied', 'success'); }
+  catch { toast('Invite link ready — copy it', 'info'); }
+}
+
+async function signOut() {
+  localStorage.removeItem('poker_group');
+  sessionStorage.removeItem('poker_role');
+  activeGroupId = null;
+  if (_auth0Client) {
+    try { await _auth0Client.logout({ logoutParams: { returnTo: location.origin + location.pathname } }); return; }
+    catch (e) { console.warn(e); }
+  }
+  location.reload();
+}
+
+// Redeem an invite code (from a ?invite= link, preserved across the Auth0
+// redirect via sessionStorage) and land the user in that group.
+async function maybeAcceptInvite() {
+  const code = sessionStorage.getItem('pending_invite')
+            || new URLSearchParams(location.search).get('invite');
+  if (!code) return;
+  sessionStorage.removeItem('pending_invite');
+  const { data } = await api(`/invites/${encodeURIComponent(code)}/accept`, 'POST');
+  if (data && data.group) {
+    activeGroupId = data.group.id;
+    localStorage.setItem('poker_group', activeGroupId);
+    toast(`Joined ${data.group.name}`, 'success');
+  }
+  const url = new URL(location.href);
+  if (url.searchParams.has('invite')) {
+    url.searchParams.delete('invite');
+    window.history.replaceState({}, document.title, url.pathname + url.search);
+  }
+}
+
+document.getElementById('btn-account')?.addEventListener('click', openAccountModal);
+document.getElementById('btn-account-casino')?.addEventListener('click', openAccountModal);
+document.getElementById('account-close')?.addEventListener('click', () =>
+  document.getElementById('modal-account').classList.add('hidden'));
+document.getElementById('account-invite-btn')?.addEventListener('click', generateInvite);
+document.getElementById('account-signout')?.addEventListener('click', signOut);
+
 /* ── Boot ─────────────────────────────────────────────────────── */
 async function startup() {
   if (authMode() === 'auth0') {
+    // Preserve an invite code across the Auth0 redirect round-trip.
+    const inviteParam = new URLSearchParams(location.search).get('invite');
+    if (inviteParam) sessionStorage.setItem('pending_invite', inviteParam);
+
     let authed = false;
     try { authed = await initAuth0(); }
     catch (e) { console.warn(e); }
-    if (authed && await syncIdentity()) {
-      document.getElementById('lock-screen').classList.add('hidden');
-      boot();
-    } else {
-      showLockScreen();
+    if (authed) {
+      await maybeAcceptInvite();          // before syncIdentity so the joined group is active
+      if (await syncIdentity()) {
+        document.getElementById('lock-screen').classList.add('hidden');
+        boot();
+        return;
+      }
     }
+    showLockScreen();
   } else if (sessionStorage.getItem('poker_auth') === 'true') {
     boot();
   } else {

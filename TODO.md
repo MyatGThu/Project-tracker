@@ -54,10 +54,14 @@ not just priority — earlier phases unblock later ones.
       Meta Business verification + privacy-policy URL + App Review — budget real time or
       defer. **Apple** only needed if shipping to the iOS App Store (paid dev account).
       → No code change needed: enable the connections in the Auth0 dashboard. Just config.
-- [ ] **Remaining polish for multi-user:** in-app group switcher UI (the API already
-      accepts `X-Group-Id` and `/api/me` returns all memberships), an invite-accept screen
-      that reads a `?invite=CODE` link, a logout control, and the optional Phase 1 backfill
-      (default group + `NOT NULL` on `group_id`) once every deployment has migrated.
+- [x] **Multi-user UX:** Account modal with in-app group switcher (uses `X-Group-Id` +
+      `/api/me`), invite-link generation, `?invite=CODE` redemption (preserved across the
+      Auth0 redirect), and a sign-out control. Buttons stay hidden in password mode.
+- [ ] **Retire the password path** (decided): once accounts are in real use, remove the
+      password lock + `/api/auth` + `LOCK_PASSWORD`/`USER_PASSWORD` so Auth0 is the only
+      way in. Deferred until after a deployment has run on accounts.
+- [ ] **Optional Phase 1 backfill** (skipped for now — current data is disposable): a
+      default group + `NOT NULL` on `group_id` once a deployment has data worth migrating.
 
 ## Phase 3 — Hosting (optional: Azure free tier)
 

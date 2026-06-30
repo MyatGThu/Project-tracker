@@ -126,12 +126,18 @@ cp config.example.js config.js
 #        DEFAULT_ROSTER = [...your starter player names...]
 ```
 
-Then deploy the static files to Cloudflare Pages — either:
+Then deploy the static files. Because the frontend is just static files with **no
+build step**, any static host works — pick one:
 
-- **Connect a Git repo:** Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git. Framework preset **None**, build command **blank**, output directory **/**. Or
-- **Direct upload:** `npx wrangler pages deploy .`
+- **Cloudflare Pages — connect a Git repo:** dashboard → Workers & Pages → Create → Pages → Connect to Git. Framework preset **None**, build command **blank**, output directory **/**.
+- **Cloudflare Pages — direct upload:** `npx wrangler pages deploy .`
+- **Vercel / Netlify / any static host:** point it at the repo root, framework preset **Other/None**, no build command, output directory **/**.
 
-Open the resulting `*.pages.dev` URL, enter your password, pick a mode, and you're live.
+The frontend and the Worker API are separate origins (the Worker sends permissive
+CORS), so the static host and Cloudflare don't need to be the same provider. Open the
+resulting URL, enter your password, pick a mode, and you're live. **If you enable
+multi-user mode (below), set your Auth0 callback URLs to whichever domain(s) you deploy
+the frontend on.**
 
 ### 3. (Optional) Custom domain
 Add it under your Pages project → **Custom domains**. Cloudflare provisions SSL automatically.

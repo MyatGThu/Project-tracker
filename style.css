@@ -3333,6 +3333,11 @@ input[type="date"].input::-webkit-calendar-picker-indicator {
   .timer-settings     { gap: 10px; }
 }
 
+/* ── Account / group modal (multi-user mode) ─────────────────────── */
+.account-groups { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.account-group.active { opacity: 0.85; cursor: default; }
+#account-invite-out { margin-top: 8px; font-size: 0.85rem; }
+
 /* ── Scrollbar ───────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }

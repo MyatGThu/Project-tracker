@@ -193,6 +193,7 @@
           <h1>Dashboard</h1>
         </div>
         <div class="home-header-actions">
+          <button id="btn-account" class="btn btn-ghost btn-sm account-btn hidden" title="Account" aria-label="Account"><svg class="icon"><use href="#i-crown"/></svg></button>
           <button id="btn-switch-to-casino" class="btn btn-ghost btn-sm" title="Casino mode" aria-label="Switch to casino mode"><svg class="icon"><use href="#i-dice"/></svg></button>
           <button id="btn-new-session-dash" class="btn btn-primary">+ New</button>
         </div>
@@ -421,7 +422,10 @@
           <span class="suit-deco">◆</span>
           <h1>Casino</h1>
         </div>
-        <button id="btn-switch-to-home" class="btn btn-ghost btn-sm"><svg class="icon"><use href="#i-home"/></svg> Home</button>
+        <div class="home-header-actions">
+          <button id="btn-account-casino" class="btn btn-ghost btn-sm account-btn hidden" title="Account" aria-label="Account"><svg class="icon"><use href="#i-crown"/></svg></button>
+          <button id="btn-switch-to-home" class="btn btn-ghost btn-sm"><svg class="icon"><use href="#i-home"/></svg> Home</button>
+        </div>
       </header>
       <nav class="sub-tab-nav">
         <button class="sub-tab active" data-period="all">All Time</button>
@@ -544,6 +548,32 @@
         <div class="modal-actions-right">
           <button id="modal-cancel" class="btn btn-ghost">Cancel</button>
           <button id="modal-confirm" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account / group modal (multi-user mode only) -->
+  <div id="modal-account" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Account</h3>
+        <p id="account-identity" class="modal-label"></p>
+      </div>
+
+      <p class="modal-label">Your groups</p>
+      <div id="account-groups" class="account-groups"></div>
+
+      <div id="account-invite-wrap" class="hidden">
+        <p class="modal-label">Invite someone to this group</p>
+        <button id="account-invite-btn" class="btn btn-ghost btn-block">Create invite link</button>
+        <input id="account-invite-out" class="input hidden" readonly aria-label="Invite link" />
+      </div>
+
+      <div class="modal-actions modal-actions-split">
+        <button id="account-signout" class="btn btn-danger">Sign out</button>
+        <div class="modal-actions-right">
+          <button id="account-close" class="btn btn-ghost">Close</button>
         </div>
       </div>
     </div>
