@@ -136,16 +136,55 @@ Open the resulting `*.pages.dev` URL, enter your password, pick a mode, and you'
 ### 3. (Optional) Custom domain
 Add it under your Pages project → **Custom domains**. Cloudflare provisions SSL automatically.
 
+### 4. (Optional) Multi-user accounts with Auth0
+
+By default the app uses a single shared password (the data API is unauthenticated —
+fine for one trusted group on a shared device). To give each poker crew its **own
+private data behind real logins**, switch on multi-user mode. When it's off,
+everything works exactly as before.
+
+1. **Create an Auth0 tenant** (free) → create a **Single Page Application** and an
+   **API**. Note the SPA's *Domain* + *Client ID* and the API's *Identifier* (audience).
+2. In the SPA settings, add your site URL to **Allowed Callback URLs**, **Allowed Logout
+   URLs**, and **Allowed Web Origins** (e.g. `https://YOUR-APP.pages.dev`).
+3. **Worker secrets** — tell the API which tokens to trust:
+   ```bash
+   cd worker
+   npx wrangler secret put AUTH0_DOMAIN      # e.g. your-tenant.us.auth0.com
+   npx wrangler secret put AUTH0_AUDIENCE    # the API Identifier from step 1
+   npm run deploy
+   ```
+4. **Frontend** — set the `AUTH0` block in `config.js` (all public values):
+   ```js
+   const AUTH0 = {
+     domain:   'your-tenant.us.auth0.com',
+     clientId: 'YOUR_SPA_CLIENT_ID',
+     audience: 'https://api.poker-tracker',   // must match AUTH0_AUDIENCE
+   };
+   ```
+5. Redeploy the frontend. The lock screen now shows **Sign in**; the first login
+   provisions a personal group, and group owners/admins can invite others
+   (`POST /api/invites` → share the code → `POST /api/invites/:code/accept`).
+
+Social sign-in (GitHub, Google, …) is just an Auth0 dashboard toggle — no code change.
+For local development, put the two secrets in `worker/.dev.vars` (see
+`worker/.dev.vars.example`).
+
 ---
 
 ## 🧪 Tests
 
 ```bash
 npm install
-npm test       # runs the settlement / money-math suite (Vitest)
+npm test       # runs all Vitest suites
 ```
 
-The trust-critical logic (net calculation, minimal-transaction settlement, discrepancy spreading) lives in `settlement.js` and is fully unit-tested.
+- **`settlement.test.js`** — the trust-critical money math (net calculation,
+  minimal-transaction settlement, discrepancy spreading) in `settlement.js`.
+- **`worker/auth.test.js`** — Auth0 RS256 token verification (valid tokens accepted;
+  tampering, wrong audience/issuer, expiry, and `alg` downgrade rejected).
+- **`worker/integration.test.js`** — the real Worker handler against an in-memory
+  SQLite DB, asserting group data isolation, blocked cross-group writes, and the invite flow.
 
 ---
 
@@ -158,6 +197,7 @@ All deployment-specific values live in **`config.js`** (gitignored):
 | `API_BASE` | Your Worker URL + `/api` |
 | `CURRENCY` | Currency symbol shown throughout (`$`, `£`, `€`, `A$`, …) |
 | `DEFAULT_ROSTER` | Starter list of player names in the picker |
+| `AUTH0` | `null` for password mode, or `{ domain, clientId, audience }` to enable multi-user accounts (see step 4 above) |
 
 Other tweaks:
 - **Quick re-buy amount** — set in-app (persists per device), defaults to $20

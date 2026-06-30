@@ -21,3 +21,15 @@ const DEFAULT_ROSTER = ['Alex', 'Sam', 'Jordan', 'Casey', 'Taylor', 'Morgan'];
 const RANK_BADGES = {
   3: { icon: 'jester' },
 };
+
+// Multi-user accounts (optional). Leave as null for the original single-password
+// lock (the API stays unauthenticated). To switch on Auth0 sign-in + per-group
+// data ownership, fill in your Auth0 SPA app's domain + clientId and your API's
+// audience (all public, safe to commit), then set the AUTH0_DOMAIN and
+// AUTH0_AUDIENCE Worker secrets to the same domain/audience. See README.
+const AUTH0 = null;
+//   const AUTH0 = {
+//     domain:   'YOUR-TENANT.us.auth0.com',
+//     clientId: 'YOUR_SPA_CLIENT_ID',
+//     audience: 'https://api.poker-tracker',
+//   };

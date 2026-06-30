@@ -1,0 +1,13 @@
+# Local secrets for `wrangler dev`. Copy to `worker/.dev.vars` (gitignored) and
+# fill in. In production these are set with `npx wrangler secret put <NAME>`.
+
+# Password-mode lock screen (used when AUTH0 is NOT configured).
+LOCK_PASSWORD = "change-me-admin"
+# Optional restricted role; omit to keep a single password.
+# USER_PASSWORD = "change-me-user"
+
+# Multi-user mode (Auth0). Set BOTH to require verified logins and per-group
+# data scoping. Must match the AUTH0 block in config.js (audience === audience,
+# domain === domain). Leave unset to keep password mode.
+# AUTH0_DOMAIN   = "your-tenant.us.auth0.com"
+# AUTH0_AUDIENCE = "https://api.poker-tracker"

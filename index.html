@@ -104,10 +104,15 @@
         <h1 class="lock-title">Poker Tracker</h1>
       </div>
       <p class="lock-subtitle">Enter password to continue</p>
-      <div class="lock-form">
+      <!-- Password lock (default). Hidden by app.js when Auth0 mode is on. -->
+      <div class="lock-form" id="lock-form-password">
         <input id="lock-password" type="password" placeholder="Password"
                class="input lock-input" autocomplete="off" />
         <button id="lock-submit" class="btn btn-primary lock-btn">Unlock</button>
+      </div>
+      <!-- Auth0 sign-in (shown only when config.js defines AUTH0). -->
+      <div class="lock-form hidden" id="lock-form-auth0">
+        <button id="lock-auth0-btn" class="btn btn-primary lock-btn">Sign in</button>
       </div>
       <p id="lock-error" class="lock-error hidden">Incorrect password</p>
     </div>
@@ -766,6 +771,9 @@
   <div id="toast-container" class="toast-container"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Auth0 SPA SDK — only used when config.js defines AUTH0 (multi-user mode);
+       harmless to load otherwise. -->
+  <script src="https://cdn.jsdelivr.net/npm/@auth0/auth0-spa-js@2/dist/auth0-spa-js.production.js"></script>
   <script src="config.js"></script>
   <script src="settlement.js"></script>
   <script src="app.js"></script>

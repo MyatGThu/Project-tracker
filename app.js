@@ -6,6 +6,24 @@
 // Currency symbol — from config.js (CURRENCY), falls back to '$'.
 const CUR = (typeof CURRENCY !== 'undefined' && CURRENCY) ? CURRENCY : '$';
 
+/* ── Auth mode ─────────────────────────────────────────────────────
+   When config.js sets AUTH0 = { domain, clientId, audience }, the app runs in
+   multi-user mode: it signs in via Auth0 and attaches a Bearer token + the
+   active group to every request. Otherwise it falls back to the original
+   shared-password lock and the API stays unauthenticated. authMode() is the
+   single source of truth. */
+const AUTH0_CFG = (typeof AUTH0 !== 'undefined' && AUTH0 && AUTH0.domain && AUTH0.clientId) ? AUTH0 : null;
+const authMode = () => (AUTH0_CFG ? 'auth0' : 'password');
+
+let _auth0Client  = null;                                  // Auth0 SPA client
+let activeGroupId = localStorage.getItem('poker_group') || null;
+
+async function authToken() {
+  if (authMode() !== 'auth0' || !_auth0Client) return null;
+  try { return await _auth0Client.getTokenSilently(); }   // cached + auto-refreshed
+  catch { return null; }
+}
+
 async function api(path, method = 'GET', body) {
   // Config guard — API_BASE missing or still the placeholder
   if (typeof API_BASE === 'undefined' || !API_BASE || API_BASE.includes('YOUR-WORKER')) {
@@ -17,6 +35,13 @@ async function api(path, method = 'GET', body) {
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
+  }
+
+  // Multi-user mode: send the verified identity + active group.
+  if (authMode() === 'auth0') {
+    const tok = await authToken();
+    if (tok) opts.headers['Authorization'] = `Bearer ${tok}`;
+    if (activeGroupId) opts.headers['X-Group-Id'] = activeGroupId;
   }
 
   // Network layer — Worker unreachable, wrong URL, CORS, offline
@@ -2911,13 +2936,89 @@ document.getElementById('lock-password').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('lock-submit').click();
 });
 
-/* ── Boot ─────────────────────────────────────────────────────── */
-if (sessionStorage.getItem('poker_auth') === 'true') {
-  boot();
-} else {
+/* ── Auth0 sign-in (multi-user mode) ──────────────────────────────
+   Only wired up when config.js defines AUTH0; in password mode these helpers
+   are inert and the original lock flow above is used unchanged. */
+async function initAuth0() {
+  if (typeof auth0 === 'undefined') throw new Error('Auth0 SDK failed to load');
+  _auth0Client = await auth0.createAuth0Client({
+    domain:   AUTH0_CFG.domain,
+    clientId: AUTH0_CFG.clientId,
+    authorizationParams: {
+      audience:     AUTH0_CFG.audience,
+      redirect_uri: window.location.origin + window.location.pathname,
+    },
+    cacheLocation:   'localstorage',
+    useRefreshTokens: true,
+  });
+  // Complete a redirect login if we're returning from Auth0.
+  const q = window.location.search;
+  if (q.includes('code=') && q.includes('state=')) {
+    try { await _auth0Client.handleRedirectCallback(); }
+    catch (e) { console.warn('Auth0 callback failed', e); }
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+  return _auth0Client.isAuthenticated();
+}
+
+// Pull the signed-in identity, set the active group, and map the per-group role
+// onto the existing admin/user gating (owner|admin → admin, member → user).
+async function syncIdentity() {
+  const { data } = await api('/me');
+  if (!data) return false;
+  if (data.group) {
+    activeGroupId = data.group.id;
+    localStorage.setItem('poker_group', activeGroupId);
+    const r = data.group.role;
+    sessionStorage.setItem('poker_role', (r === 'owner' || r === 'admin') ? 'admin' : 'user');
+  }
+  return true;
+}
+
+function showLockScreen() {
   document.getElementById('lock-screen').classList.remove('hidden');
   document.getElementById('splash').style.display = 'none';
+  const auth = authMode() === 'auth0';
+  document.getElementById('lock-form-password')?.classList.toggle('hidden', auth);
+  document.getElementById('lock-form-auth0')?.classList.toggle('hidden', !auth);
+  if (auth) {
+    const sub = document.querySelector('.lock-subtitle');
+    if (sub) sub.textContent = 'Sign in to continue';
+  }
 }
+
+document.getElementById('lock-auth0-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('lock-auth0-btn');
+  btn.disabled = true; btn.textContent = 'Redirecting…';
+  try {
+    if (!_auth0Client) await initAuth0();
+    await _auth0Client.loginWithRedirect();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Sign in';
+    const errEl = document.getElementById('lock-error');
+    errEl.textContent = e.message || 'Sign-in failed'; errEl.classList.remove('hidden');
+  }
+});
+
+/* ── Boot ─────────────────────────────────────────────────────── */
+async function startup() {
+  if (authMode() === 'auth0') {
+    let authed = false;
+    try { authed = await initAuth0(); }
+    catch (e) { console.warn(e); }
+    if (authed && await syncIdentity()) {
+      document.getElementById('lock-screen').classList.add('hidden');
+      boot();
+    } else {
+      showLockScreen();
+    }
+  } else if (sessionStorage.getItem('poker_auth') === 'true') {
+    boot();
+  } else {
+    showLockScreen();
+  }
+}
+startup();
 
 /* ── Service Worker registration (PWA) ─────────────────────────── */
 if ('serviceWorker' in navigator) {

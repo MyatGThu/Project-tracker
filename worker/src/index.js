@@ -2,12 +2,21 @@
    Poker Tracker — Cloudflare Worker API
    Handles all CRUD for sessions, session_players, and buyins.
    Database: Cloudflare D1 (SQLite)
+
+   Multi-user (TODO Phase 1 + 2): when Auth0 is configured (AUTH0_DOMAIN +
+   AUTH0_AUDIENCE secrets), every /api route below requires a verified Bearer
+   token and is scoped to the caller's active group. When those secrets are
+   absent the API behaves exactly as the original single-shared-dataset app.
    ───────────────────────────────────────────────────────────── */
+
+import { authEnabled, authenticate } from './auth.js';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  // Authorization + X-Group-Id must be allowed for the browser preflight to
+  // pass once Auth0 is on (bearer token + active-group selector).
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Group-Id',
 };
 
 const ok    = d          => Response.json(d,               { headers: CORS });
@@ -35,6 +44,75 @@ const isPos         = v => typeof v === 'number' && Number.isFinite(v) && v > 0;
 const isMoneyOrNull = v => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
 const isDateStr     = v => typeof v === 'string' && !Number.isNaN(Date.parse(v));
 
+// ── Group scoping helpers ─────────────────────────────────────────
+const INVITE_ROLES = ['admin', 'member'];   // 'owner' is never granted via invite
+
+// WHERE fragment that constrains a query to the caller's group. When gid is
+// null (auth disabled) it matches every row, preserving legacy behaviour.
+const groupFilter = (gid, col = 'group_id') =>
+  gid ? { clause: `${col} = ?`, args: [gid] } : { clause: '1 = 1', args: [] };
+
+/* Resolve the authenticated principal: upsert the user, ensure they belong to
+   at least one group (provisioning a personal one on first login), and choose
+   the active group — the X-Group-Id header when the caller is a member of it,
+   otherwise their oldest membership. */
+async function resolvePrincipal(request, env, claims) {
+  const sub   = claims.sub;
+  const email = typeof claims.email === 'string' ? claims.email : null;
+  const name  = claims.name || claims.nickname || email || 'Player';
+
+  let user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
+  if (!user) {
+    try {
+      await env.DB.prepare('INSERT INTO users (id, email, name) VALUES (?, ?, ?)')
+        .bind(sub, email, name).run();
+    } catch (e) {
+      // users.email is UNIQUE: tolerate the same person arriving via a second
+      // identity provider by reusing the existing row.
+      if (email) user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
+      if (!user) throw e;
+    }
+    user ||= await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
+  }
+  const userId = user.id;
+
+  let { results: memberships } = await env.DB.prepare(
+    'SELECT group_id, role FROM group_members WHERE user_id = ? ORDER BY created_at ASC'
+  ).bind(userId).all();
+
+  if (!memberships.length) {
+    const gid = crypto.randomUUID();
+    await env.DB.prepare('INSERT INTO groups (id, name) VALUES (?, ?)')
+      .bind(gid, `${name}'s table`).run();
+    await env.DB.prepare(
+      'INSERT INTO group_members (id, group_id, user_id, role) VALUES (?, ?, ?, ?)'
+    ).bind(crypto.randomUUID(), gid, userId, 'owner').run();
+    memberships = [{ group_id: gid, role: 'owner' }];
+  }
+
+  const requested = request.headers.get('X-Group-Id');
+  const active = (requested && memberships.find(m => m.group_id === requested)) || memberships[0];
+  return { userId, email: user.email, name: user.name, groupId: active.group_id, role: active.role };
+}
+
+// Look up a single row's owning group_id via `sql` (one bind param: the id).
+// Returns true when the caller may touch it: always true when auth is off,
+// otherwise the row must exist and belong to the caller's group.
+async function ownsRow(env, gid, sql, id) {
+  if (!gid) return true;
+  const row = await env.DB.prepare(sql).bind(id).first();
+  return Boolean(row) && row.group_id === gid;
+}
+
+const SQL_SESSION_GROUP = 'SELECT group_id FROM sessions WHERE id = ?';
+const SQL_PLAYER_GROUP  =
+  'SELECT s.group_id AS group_id FROM session_players sp JOIN sessions s ON s.id = sp.session_id WHERE sp.id = ?';
+const SQL_BUYIN_GROUP   =
+  `SELECT s.group_id AS group_id FROM buyins b
+   JOIN session_players sp ON sp.id = b.session_player_id
+   JOIN sessions s ON s.id = sp.session_id WHERE b.id = ?`;
+const SQL_VISIT_GROUP   = 'SELECT group_id FROM casino_visits WHERE id = ?';
+
 export default {
   async fetch(request, env) {
     const { pathname: path } = new URL(request.url);
@@ -42,14 +120,11 @@ export default {
 
     if (method === 'OPTIONS') return new Response(null, { headers: CORS });
 
-    // Auth check runs before DB — no dependency on D1
+    // Legacy password lock — runs before the auth gate so it stays reachable.
+    // Only meaningful when Auth0 is NOT configured; ignored by the Auth0 client.
     if (path === '/api/auth' && method === 'POST') {
       try {
         const { password } = await request.json();
-        // Two roles share one lock screen. LOCK_PASSWORD = full-access admin.
-        // USER_PASSWORD = optional restricted role (hides destructive actions
-        // client-side). If USER_PASSWORD is never set, only admin works and the
-        // app behaves exactly as a single-password lock.
         if (password && password === env.LOCK_PASSWORD) {
           return ok({ success: true, role: 'admin' });
         }
@@ -65,14 +140,94 @@ export default {
 
     await env.DB.exec('PRAGMA foreign_keys = ON');
 
+    // ── Auth gate ──────────────────────────────────────────────────
+    // With Auth0 configured, every remaining route requires a valid token and
+    // is scoped to ctx.groupId. Without it, ctx is null and gid stays null,
+    // so the group filters below match all rows (original behaviour).
+    let ctx = null;
+    if (authEnabled(env)) {
+      let claims;
+      try { claims = await authenticate(request, env); }
+      catch { return err('Unauthorized', 401); }
+      try { ctx = await resolvePrincipal(request, env, claims); }
+      catch (e) { return err(e.message); }
+    }
+    const gid = ctx?.groupId ?? null;
+
     try {
+
+      /* ── GET /api/me ───────────────────────────────────────────
+         The signed-in user + their groups + active group           */
+      if (path === '/api/me' && method === 'GET') {
+        if (!ctx) return err('Authentication is not enabled', 404);
+        const { results: groups } = await env.DB.prepare(
+          `SELECT g.id, g.name, gm.role
+           FROM   group_members gm
+           JOIN   groups g ON g.id = gm.group_id
+           WHERE  gm.user_id = ?
+           ORDER  BY gm.created_at ASC`
+        ).bind(ctx.userId).all();
+        return ok({
+          id:     ctx.userId,
+          email:  ctx.email,
+          name:   ctx.name,
+          group:  groups.find(g => g.id === gid) ?? null,
+          groups,
+        });
+      }
+
+      /* ── POST /api/invites ─────────────────────────────────────
+         Create an invite code for the caller's active group         */
+      if (path === '/api/invites' && method === 'POST') {
+        if (!ctx) return err('Authentication is not enabled', 404);
+        if (ctx.role !== 'owner' && ctx.role !== 'admin')
+          return err('Only group owners or admins can invite', 403);
+        const body = await request.json().catch(() => ({}));
+        const role = INVITE_ROLES.includes(body.role) ? body.role : 'member';
+        const id   = crypto.randomUUID();
+        const code = crypto.randomUUID().replace(/-/g, '');
+        await env.DB.prepare(
+          'INSERT INTO invites (id, group_id, code, role, invited_email, created_by) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(id, gid, code, role, isStr(body.email) ? body.email : null, ctx.userId).run();
+        return ok({ code, role, group_id: gid });
+      }
+
+      /* ── POST /api/invites/:code/accept ────────────────────────
+         Join the invite's group as the signed-in user              */
+      const inviteAccept = path.match(/^\/api\/invites\/([^/]+)\/accept$/);
+      if (inviteAccept && method === 'POST') {
+        if (!ctx) return err('Authentication is not enabled', 404);
+        const invite = await env.DB.prepare('SELECT * FROM invites WHERE code = ?')
+          .bind(inviteAccept[1]).first();
+        if (!invite)             return err('Invite not found', 404);
+        if (invite.accepted_at)  return err('Invite already used', 409);
+        if (invite.expires_at && Date.parse(invite.expires_at) < Date.now())
+          return err('Invite expired', 410);
+
+        const already = await env.DB.prepare(
+          'SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?'
+        ).bind(invite.group_id, ctx.userId).first();
+        if (!already) {
+          await env.DB.prepare(
+            'INSERT INTO group_members (id, group_id, user_id, role) VALUES (?, ?, ?, ?)'
+          ).bind(crypto.randomUUID(), invite.group_id, ctx.userId, invite.role).run();
+        }
+        await env.DB.prepare(
+          "UPDATE invites SET accepted_by = ?, accepted_at = datetime('now') WHERE id = ?"
+        ).bind(ctx.userId, invite.id).run();
+
+        const group = await env.DB.prepare('SELECT id, name FROM groups WHERE id = ?')
+          .bind(invite.group_id).first();
+        return ok({ group, role: invite.role });
+      }
 
       /* ── GET /api/sessions ─────────────────────────────────────
          All sessions with nested session_players + buyins          */
       if (path === '/api/sessions' && method === 'GET') {
+        const gf = groupFilter(gid);
         const { results: sessions } = await env.DB.prepare(
-          'SELECT * FROM sessions ORDER BY created_at DESC'
-        ).all();
+          `SELECT * FROM sessions WHERE ${gf.clause} ORDER BY created_at DESC`
+        ).bind(...gf.args).all();
 
         if (!sessions.length) return ok([]);
 
@@ -113,12 +268,12 @@ export default {
         const id = crypto.randomUUID();
         if (created_at) {
           await env.DB.prepare(
-            'INSERT INTO sessions (id, name, status, created_at) VALUES (?, ?, ?, ?)'
-          ).bind(id, name, 'active', created_at).run();
+            'INSERT INTO sessions (id, name, status, group_id, created_at) VALUES (?, ?, ?, ?, ?)'
+          ).bind(id, name, 'active', gid, created_at).run();
         } else {
           await env.DB.prepare(
-            'INSERT INTO sessions (id, name, status) VALUES (?, ?, ?)'
-          ).bind(id, name, 'active').run();
+            'INSERT INTO sessions (id, name, status, group_id) VALUES (?, ?, ?, ?)'
+          ).bind(id, name, 'active', gid).run();
         }
         return ok(await env.DB.prepare('SELECT * FROM sessions WHERE id = ?').bind(id).first());
       }
@@ -129,6 +284,7 @@ export default {
          Update name or status                                      */
       if (sessionMatch && method === 'PATCH') {
         const id   = sessionMatch[1];
+        if (!(await ownsRow(env, gid, SQL_SESSION_GROUP, id))) return err('Not found', 404);
         const body = await request.json();
         if ('status' in body && body.status !== 'active' && body.status !== 'settled')
           return err('Invalid status', 400);
@@ -144,6 +300,7 @@ export default {
          Delete session + cascade to players + buyins               */
       if (sessionMatch && method === 'DELETE') {
         const id = sessionMatch[1];
+        if (!(await ownsRow(env, gid, SQL_SESSION_GROUP, id))) return err('Not found', 404);
         const { results: players } = await env.DB.prepare(
           'SELECT id FROM session_players WHERE session_id = ?'
         ).bind(id).all();
@@ -160,6 +317,7 @@ export default {
       const playersMatch = path.match(/^\/api\/sessions\/([^/]+)\/players$/);
       if (playersMatch && method === 'GET') {
         const sessionId = playersMatch[1];
+        if (!(await ownsRow(env, gid, SQL_SESSION_GROUP, sessionId))) return err('Not found', 404);
         const { results: players } = await env.DB.prepare(
           'SELECT * FROM session_players WHERE session_id = ? ORDER BY created_at ASC'
         ).bind(sessionId).all();
@@ -187,6 +345,7 @@ export default {
         const { session_id, player_name } = await request.json();
         if (!isStr(session_id))  return err('session_id is required', 400);
         if (!isStr(player_name)) return err('Player name is required', 400);
+        if (!(await ownsRow(env, gid, SQL_SESSION_GROUP, session_id))) return err('Not found', 404);
         const id = crypto.randomUUID();
         await env.DB.prepare(
           'INSERT INTO session_players (id, session_id, player_name) VALUES (?, ?, ?)'
@@ -200,6 +359,7 @@ export default {
          Update final_chips on settle                               */
       if (spMatch && method === 'PATCH') {
         const id = spMatch[1];
+        if (!(await ownsRow(env, gid, SQL_PLAYER_GROUP, id))) return err('Not found', 404);
         const { final_chips } = await request.json();
         if (!isMoneyOrNull(final_chips)) return err('final_chips must be zero or more, or null', 400);
         await env.DB.prepare('UPDATE session_players SET final_chips = ? WHERE id = ?')
@@ -211,6 +371,7 @@ export default {
          Remove player + cascade to buyins                          */
       if (spMatch && method === 'DELETE') {
         const id = spMatch[1];
+        if (!(await ownsRow(env, gid, SQL_PLAYER_GROUP, id))) return err('Not found', 404);
         await env.DB.prepare('DELETE FROM buyins WHERE session_player_id = ?').bind(id).run();
         await env.DB.prepare('DELETE FROM session_players WHERE id = ?').bind(id).run();
         return ok({ success: true });
@@ -222,6 +383,7 @@ export default {
         const { session_player_id, amount } = await request.json();
         if (!isStr(session_player_id)) return err('session_player_id is required', 400);
         if (!isPos(amount))            return err('Buy-in amount must be a positive number', 400);
+        if (!(await ownsRow(env, gid, SQL_PLAYER_GROUP, session_player_id))) return err('Not found', 404);
         const id = crypto.randomUUID();
         await env.DB.prepare(
           'INSERT INTO buyins (id, session_player_id, amount) VALUES (?, ?, ?)'
@@ -235,6 +397,7 @@ export default {
          Edit a buy-in amount                                       */
       if (buyinMatch && method === 'PATCH') {
         const id = buyinMatch[1];
+        if (!(await ownsRow(env, gid, SQL_BUYIN_GROUP, id))) return err('Not found', 404);
         const { amount } = await request.json();
         if (!isPos(amount)) return err('Buy-in amount must be a positive number', 400);
         await env.DB.prepare('UPDATE buyins SET amount = ? WHERE id = ?').bind(amount, id).run();
@@ -245,6 +408,7 @@ export default {
          Remove a buy-in entry                                      */
       if (buyinMatch && method === 'DELETE') {
         const id = buyinMatch[1];
+        if (!(await ownsRow(env, gid, SQL_BUYIN_GROUP, id))) return err('Not found', 404);
         await env.DB.prepare('DELETE FROM buyins WHERE id = ?').bind(id).run();
         return ok({ success: true });
       }
@@ -252,6 +416,7 @@ export default {
       /* ── GET /api/stats ────────────────────────────────────────
          Settled session stats for leaderboard, records, dashboard  */
       if (path === '/api/stats' && method === 'GET') {
+        const gf = groupFilter(gid, 's.group_id');
         const { results } = await env.DB.prepare(`
           SELECT sp.id         AS sp_id,
                  sp.player_name,
@@ -264,8 +429,9 @@ export default {
           LEFT   JOIN buyins   b ON b.session_player_id = sp.id
           WHERE  s.status = 'settled'
             AND  sp.final_chips IS NOT NULL
+            AND  ${gf.clause}
           ORDER  BY s.created_at DESC
-        `).all();
+        `).bind(...gf.args).all();
 
         const map = {};
         for (const row of results) {
@@ -291,6 +457,7 @@ export default {
       const playerHistoryMatch = path.match(/^\/api\/players\/(.+)\/history$/);
       if (playerHistoryMatch && method === 'GET') {
         const playerName = decodeURIComponent(playerHistoryMatch[1]);
+        const gf = groupFilter(gid, 's.group_id');
 
         const { results } = await env.DB.prepare(`
           SELECT sp.id         AS sp_id,
@@ -304,8 +471,9 @@ export default {
           WHERE  s.status = 'settled'
             AND  sp.final_chips IS NOT NULL
             AND  LOWER(sp.player_name) = LOWER(?)
+            AND  ${gf.clause}
           ORDER  BY s.created_at DESC
-        `).bind(playerName).all();
+        `).bind(playerName, ...gf.args).all();
 
         const map = {};
         for (const row of results) {
@@ -328,9 +496,10 @@ export default {
       /* ── GET /api/casino/visits ────────────────────────────────
          All casino visits, newest first                            */
       if (path === '/api/casino/visits' && method === 'GET') {
+        const gf = groupFilter(gid);
         const { results } = await env.DB.prepare(
-          'SELECT * FROM casino_visits ORDER BY created_at DESC'
-        ).all();
+          `SELECT * FROM casino_visits WHERE ${gf.clause} ORDER BY created_at DESC`
+        ).bind(...gf.args).all();
         return ok(results);
       }
 
@@ -345,12 +514,12 @@ export default {
         const id = crypto.randomUUID();
         if (created_at) {
           await env.DB.prepare(
-            'INSERT INTO casino_visits (id, casino_name, buy_in, cash_out, games, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-          ).bind(id, casino_name, buy_in, cash_out ?? null, games ?? '', notes ?? null, created_at).run();
+            'INSERT INTO casino_visits (id, casino_name, buy_in, cash_out, games, notes, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+          ).bind(id, casino_name, buy_in, cash_out ?? null, games ?? '', notes ?? null, gid, created_at).run();
         } else {
           await env.DB.prepare(
-            'INSERT INTO casino_visits (id, casino_name, buy_in, cash_out, games, notes) VALUES (?, ?, ?, ?, ?, ?)'
-          ).bind(id, casino_name, buy_in, cash_out ?? null, games ?? '', notes ?? null).run();
+            'INSERT INTO casino_visits (id, casino_name, buy_in, cash_out, games, notes, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).bind(id, casino_name, buy_in, cash_out ?? null, games ?? '', notes ?? null, gid).run();
         }
         return ok(await env.DB.prepare('SELECT * FROM casino_visits WHERE id = ?').bind(id).first());
       }
@@ -361,6 +530,7 @@ export default {
          Update a casino visit (settle cash_out, add notes)         */
       if (casinoVisitMatch && method === 'PATCH') {
         const id   = casinoVisitMatch[1];
+        if (!(await ownsRow(env, gid, SQL_VISIT_GROUP, id))) return err('Not found', 404);
         const body = await request.json();
         if ('casino_name' in body && !isStr(body.casino_name)) return err('Casino name cannot be empty', 400);
         if ('buy_in' in body && !isPos(body.buy_in))           return err('Buy-in must be a positive number', 400);
@@ -376,6 +546,7 @@ export default {
          Remove a casino visit                                      */
       if (casinoVisitMatch && method === 'DELETE') {
         const id = casinoVisitMatch[1];
+        if (!(await ownsRow(env, gid, SQL_VISIT_GROUP, id))) return err('Not found', 404);
         await env.DB.prepare('DELETE FROM casino_visits WHERE id = ?').bind(id).run();
         return ok({ success: true });
       }
@@ -383,9 +554,10 @@ export default {
       /* ── GET /api/casino/stats ─────────────────────────────────
          Aggregated stats for the casino dashboard                  */
       if (path === '/api/casino/stats' && method === 'GET') {
+        const gf = groupFilter(gid);
         const { results } = await env.DB.prepare(
-          'SELECT * FROM casino_visits WHERE cash_out IS NOT NULL ORDER BY created_at ASC'
-        ).all();
+          `SELECT * FROM casino_visits WHERE cash_out IS NOT NULL AND ${gf.clause} ORDER BY created_at ASC`
+        ).bind(...gf.args).all();
         return ok(results);
       }
 

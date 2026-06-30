@@ -24,12 +24,14 @@ not just priority — earlier phases unblock later ones.
       **nullable** column first so existing rows keep working; backfill, then enforce.
       → added nullable in migration 0001; legacy rows keep `group_id IS NULL`.
       Backfill + `NOT NULL` enforcement deferred until the query-scoping step below lands.
-- [ ] Scope **every** query in `worker/src/index.js` by the caller's group — reads and
+- [x] Scope **every** query in `worker/src/index.js` by the caller's group — reads and
       writes. This is the bulk of the effort and the easy thing to get subtly wrong.
-      ⚠ blocked on Phase 2: the Worker has no way to know the caller's group until auth
-      provides a verified identity. Tackle alongside the auth integration.
-- [ ] Invite flow: generate a link/code that adds a user to a group.
-      → `invites` table is in place; the accept/generate endpoints come with auth.
+      → done via `groupFilter` (read scoping) + `ownsRow` (write ownership checks) on
+      every route; verified by `worker/integration.test.js` (cross-group reads/writes 404).
+      Still gated: when Auth0 is off, `gid` is null and everything matches (legacy mode).
+- [x] Invite flow: generate a link/code that adds a user to a group.
+      → `POST /api/invites` (owner/admin only) + `POST /api/invites/:code/accept`;
+      single-use, optional expiry. Joining adds a `group_members` row.
 
 ## Phase 2 — Authentication & accounts
 
@@ -37,17 +39,25 @@ not just priority — earlier phases unblock later ones.
 > login behind one integration; rolling your own password/session/OAuth stack is a
 > liability. The `group_id` slots from Phase 1 are what the logged-in user attaches to.
 
-- [ ] Pick a provider. Candidates (all have free tiers):
-      - **Microsoft Entra External ID** (Azure-native; ~50k MAU free) — best fit if Azure is the goal
-      - **Auth0** (25k MAU) — easiest DX
-      - **Clerk** (10k MAU) — best drop-in UI
-      - **Supabase Auth** (50k MAU; bundles a free Postgres)
-- [ ] Replace the `LOCK_PASSWORD` lock screen with provider login; verify the token
+- [x] Pick a provider → **Auth0** (easiest DX; plain-JS SDK fits the no-build frontend;
+      standard OIDC JWTs the Worker verifies via JWKS). Other candidates considered:
+      Microsoft Entra External ID, Clerk, Supabase Auth.
+- [x] Replace the `LOCK_PASSWORD` lock screen with provider login; verify the token
       **server-side** in the Worker and derive the user/group from it.
+      → `worker/src/auth.js` (RS256 + JWKS verification, unit-tested); client uses
+      `auth0-spa-js` (CDN) and attaches `Authorization: Bearer` + `X-Group-Id`. The lock
+      screen shows a "Sign in" button when `AUTH0` is configured, password input otherwise.
+- [x] Migrate the existing `admin` / `user` role concept into per-group membership roles.
+      → `group_members.role` = owner | admin | member; client maps owner/admin → admin,
+      member → user, reusing the existing `isAdmin()` destructive-action gating.
 - [ ] Social sign-in: **GitHub / Google are easy** (~20 min each). **Facebook** needs
       Meta Business verification + privacy-policy URL + App Review — budget real time or
       defer. **Apple** only needed if shipping to the iOS App Store (paid dev account).
-- [ ] Migrate the existing `admin` / `user` role concept into per-group membership roles.
+      → No code change needed: enable the connections in the Auth0 dashboard. Just config.
+- [ ] **Remaining polish for multi-user:** in-app group switcher UI (the API already
+      accepts `X-Group-Id` and `/api/me` returns all memberships), an invite-accept screen
+      that reads a `?invite=CODE` link, a logout control, and the optional Phase 1 backfill
+      (default group + `NOT NULL` on `group_id`) once every deployment has migrated.
 
 ## Phase 3 — Hosting (optional: Azure free tier)
 

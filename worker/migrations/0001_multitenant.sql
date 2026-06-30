@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS groups (
 -- An authenticated identity. Populated by the auth provider in Phase 2;
 -- defined here so Phase 1 ownership columns have something to reference.
 CREATE TABLE IF NOT EXISTS users (
-  id          TEXT PRIMARY KEY,
-  email       TEXT NOT NULL UNIQUE,
+  id          TEXT PRIMARY KEY,                 -- auth provider subject (Auth0 `sub`)
+  email       TEXT UNIQUE,                      -- nullable: access tokens may omit email
   name        TEXT,
   created_at  TEXT DEFAULT (datetime('now'))
 );
