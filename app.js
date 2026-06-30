@@ -6,14 +6,12 @@
 // Currency symbol — from config.js (CURRENCY), falls back to '$'.
 const CUR = (typeof CURRENCY !== 'undefined' && CURRENCY) ? CURRENCY : '$';
 
-/* ── Auth mode ─────────────────────────────────────────────────────
-   When config.js sets AUTH0 = { domain, clientId, audience }, the app runs in
-   multi-user mode: it signs in via Auth0 and attaches a Bearer token + the
-   active group to every request. Otherwise it falls back to the original
-   shared-password lock and the API stays unauthenticated. authMode() is the
-   single source of truth. */
+/* ── Auth ──────────────────────────────────────────────────────────
+   Sign-in is via Auth0 only (the shared-password lock was retired). config.js
+   must define AUTH0 = { domain, clientId, audience }; without it the app shows
+   a "not configured" notice. Every request carries a Bearer token + the active
+   group, and the API rejects anything unauthenticated. */
 const AUTH0_CFG = (typeof AUTH0 !== 'undefined' && AUTH0 && AUTH0.domain && AUTH0.clientId) ? AUTH0 : null;
-const authMode = () => (AUTH0_CFG ? 'auth0' : 'password');
 
 let _auth0Client  = null;                                  // Auth0 SPA client
 let activeGroupId = localStorage.getItem('poker_group') || null;
@@ -34,7 +32,7 @@ function setActiveGroup(id) {
 const roleIsAdmin = role => role === 'owner' || role === 'admin';
 
 async function authToken() {
-  if (authMode() !== 'auth0' || !_auth0Client) return null;
+  if (!_auth0Client) return null;
   try { return await _auth0Client.getTokenSilently(); }   // cached + auto-refreshed
   catch { return null; }
 }
@@ -52,12 +50,10 @@ async function api(path, method = 'GET', body) {
     opts.body = JSON.stringify(body);
   }
 
-  // Multi-user mode: send the verified identity + active group.
-  if (authMode() === 'auth0') {
-    const tok = await authToken();
-    if (tok) opts.headers['Authorization'] = `Bearer ${tok}`;
-    if (activeGroupId) opts.headers['X-Group-Id'] = activeGroupId;
-  }
+  // Send the verified identity + active group on every request.
+  const tok = await authToken();
+  if (tok) opts.headers['Authorization'] = `Bearer ${tok}`;
+  if (activeGroupId) opts.headers['X-Group-Id'] = activeGroupId;
 
   // Network layer — Worker unreachable, wrong URL, CORS, offline
   let res;
@@ -82,14 +78,12 @@ async function api(path, method = 'GET', body) {
 }
 
 /* ── Role / permissions ───────────────────────────────────────────
-   Two passwords share the lock screen (see /api/auth): the admin password
-   grants full access; an optional user password grants a restricted role
-   that hides destructive actions (delete / re-open / remove / edit buy-in /
-   force-balance) so a borrowed phone can't cause an accidental change.
-   Mistake-prevention only — the data API itself is open. Role is captured
-   at unlock and kept in sessionStorage; default 'admin' (single-password
-   setups and pre-role logins behave exactly as before). */
-function getRole() { return sessionStorage.getItem('poker_role') || 'admin'; }
+   The caller's role in their active group, mapped by syncIdentity() onto
+   'admin' (group owner/admin → full access) or 'user' (member → destructive
+   actions like delete / re-open / remove / edit buy-in / force-balance are
+   hidden). Kept in sessionStorage; the server independently enforces the same
+   scoping, so this is UX gating, not the security boundary. */
+function getRole() { return sessionStorage.getItem('poker_role') || 'user'; }
 function isAdmin() { return getRole() === 'admin'; }
 
 /* ── State ────────────────────────────────────────────────────── */
@@ -2904,68 +2898,8 @@ function boot() {
   loadRoster();
 }
 
-function unlockApp(role) {
-  document.activeElement?.blur(); // dismiss keyboard & reset iOS viewport zoom
-  sessionStorage.setItem('poker_auth', 'true');
-  sessionStorage.setItem('poker_role', role || 'admin');
-  // Reveal the splash *underneath* the lock screen (splash z-index 1000 sits
-  // below the lock's 1001) BEFORE the lock fades, so the dashboard never
-  // flashes through during the 0.4s fade-out.
-  document.getElementById('splash').style.removeProperty('display');
-  const lockEl = document.getElementById('lock-screen');
-  lockEl.style.transition = 'opacity 0.4s ease';
-  lockEl.style.opacity    = '0';
-  setTimeout(() => {
-    lockEl.classList.add('hidden');
-    boot();
-  }, 400);
-}
-
-document.getElementById('lock-submit').addEventListener('click', async () => {
-  const pw    = document.getElementById('lock-password').value;
-  const btn   = document.getElementById('lock-submit');
-  const errEl = document.getElementById('lock-error');
-  const inpEl = document.getElementById('lock-password');
-
-  if (!pw) return;
-
-  btn.disabled    = true;
-  btn.textContent = 'Checking…';
-  errEl.classList.add('hidden');
-
-  const { data, error } = await api('/auth', 'POST', { password: pw });
-
-  btn.disabled    = false;
-  btn.textContent = 'Unlock';
-
-  if (data?.success) {
-    unlockApp(data.role);
-    return;
-  }
-
-  if (error && error.kind !== 'http') {
-    // Config or network problem — show the accurate reason, not "wrong password"
-    errEl.textContent = error.message;
-    errEl.classList.remove('hidden');
-    return;
-  }
-
-  // HTTP 401 from /auth → genuinely the wrong password
-  errEl.textContent = 'Incorrect password';
-  errEl.classList.remove('hidden');
-  inpEl.classList.add('shake');
-  setTimeout(() => inpEl.classList.remove('shake'), 450);
-  inpEl.value = '';
-  inpEl.focus();
-});
-
-document.getElementById('lock-password').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('lock-submit').click();
-});
-
-/* ── Auth0 sign-in (multi-user mode) ──────────────────────────────
-   Only wired up when config.js defines AUTH0; in password mode these helpers
-   are inert and the original lock flow above is used unchanged. */
+/* ── Auth0 sign-in ─────────────────────────────────────────────────
+   The only sign-in path. Requires config.js to define AUTH0. */
 async function initAuth0() {
   if (typeof auth0 === 'undefined') throw new Error('Auth0 SDK failed to load');
   _auth0Client = await auth0.createAuth0Client({
@@ -3003,13 +2937,13 @@ async function syncIdentity() {
 function showLockScreen() {
   document.getElementById('lock-screen').classList.remove('hidden');
   document.getElementById('splash').style.display = 'none';
-  const auth = authMode() === 'auth0';
-  document.getElementById('lock-form-password')?.classList.toggle('hidden', auth);
-  document.getElementById('lock-form-auth0')?.classList.toggle('hidden', !auth);
-  if (auth) {
-    const sub = document.querySelector('.lock-subtitle');
-    if (sub) sub.textContent = 'Sign in to continue';
-  }
+  const configured = Boolean(AUTH0_CFG);
+  // When Auth0 isn't configured there is no way in — show a notice instead of
+  // a sign-in button that can't work.
+  document.getElementById('lock-form-auth0')?.classList.toggle('hidden', !configured);
+  document.getElementById('lock-unconfigured')?.classList.toggle('hidden', configured);
+  const sub = document.querySelector('.lock-subtitle');
+  if (sub) sub.textContent = configured ? 'Sign in to continue' : 'Setup required';
 }
 
 document.getElementById('lock-auth0-btn')?.addEventListener('click', async () => {
@@ -3025,12 +2959,9 @@ document.getElementById('lock-auth0-btn')?.addEventListener('click', async () =>
   }
 });
 
-/* ── Account / groups (multi-user mode) ───────────────────────────
-   All inert in password mode — the account buttons stay hidden and these
-   handlers are never reached. */
+/* ── Account / groups ─────────────────────────────────────────────── */
 function wireAccountButtons() {
-  const show = authMode() === 'auth0';
-  document.querySelectorAll('.account-btn').forEach(b => b.classList.toggle('hidden', !show));
+  document.querySelectorAll('.account-btn').forEach(b => b.classList.remove('hidden'));
 }
 
 async function openAccountModal() {
@@ -3087,7 +3018,6 @@ async function generateInvite() {
 async function signOut() {
   setActiveGroup(null);
   sessionStorage.removeItem('poker_role');
-  sessionStorage.removeItem('poker_auth');
   if (_auth0Client) {
     try { await _auth0Client.logout({ logoutParams: { returnTo: appBaseUrl() } }); return; }
     catch (e) { console.warn(e); }
@@ -3127,28 +3057,24 @@ document.getElementById('account-signout')?.addEventListener('click', signOut);
 
 /* ── Boot ─────────────────────────────────────────────────────── */
 async function startup() {
-  if (authMode() === 'auth0') {
-    // Preserve an invite code across the Auth0 redirect round-trip.
-    const inviteParam = new URLSearchParams(location.search).get('invite');
-    if (inviteParam) sessionStorage.setItem('pending_invite', inviteParam);
+  if (!AUTH0_CFG) { showLockScreen(); return; }   // not configured → setup notice
 
-    let authed = false;
-    try { authed = await initAuth0(); }
-    catch (e) { console.warn(e); }
-    if (authed) {
-      await maybeAcceptInvite();          // before syncIdentity so the joined group is active
-      if (await syncIdentity()) {
-        document.getElementById('lock-screen').classList.add('hidden');
-        boot();
-        return;
-      }
+  // Preserve an invite code across the Auth0 redirect round-trip.
+  const inviteParam = new URLSearchParams(location.search).get('invite');
+  if (inviteParam) sessionStorage.setItem('pending_invite', inviteParam);
+
+  let authed = false;
+  try { authed = await initAuth0(); }
+  catch (e) { console.warn(e); }
+  if (authed) {
+    await maybeAcceptInvite();          // before syncIdentity so the joined group is active
+    if (await syncIdentity()) {
+      document.getElementById('lock-screen').classList.add('hidden');
+      boot();
+      return;
     }
-    showLockScreen();
-  } else if (sessionStorage.getItem('poker_auth') === 'true') {
-    boot();
-  } else {
-    showLockScreen();
   }
+  showLockScreen();
 }
 startup();
 

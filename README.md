@@ -27,7 +27,7 @@ A polished, installable web app for tracking **home poker games** and **casino v
 ### General
 - 🏆 **Leaderboard** with podium, win/loss streaks, and a **cumulative P&L chart**
 - 📊 **Records** — biggest wins/losses, averages, attendance, consistency
-- 🔒 **Password lock** (server-verified, no password stored in client code) — with an optional second **"user" password** for a restricted role that can't delete, re-open, or edit
+- 🔒 **Auth0 sign-in** with **per-group accounts** — each crew has its own private ledger; group owners/admins invite others via a link, members get a restricted role that can't delete, re-open, or edit
 - 📱 **Installable PWA** — add to home screen, works offline, safe-area aware
 - 🎉 Splash animation, confetti on wins, skeleton loaders, toast + undo
 
@@ -101,16 +101,10 @@ npx wrangler d1 execute poker-tracker --remote --file schema.sql
 # (Optional) load sample data so the app isn't empty on first run / for a demo
 npx wrangler d1 execute poker-tracker --remote --file seed.sql
 
-# Set the admin password (stored encrypted in Cloudflare, never in code)
-npx wrangler secret put LOCK_PASSWORD
-#   → type the admin password — full access
-
-# (Optional) Set a second, restricted "user" password. Anyone logging in with
-# it can add players, log buy-ins and settle up, but CANNOT delete or re-open
-# sessions, remove/edit buy-ins, remove players, force-balance, or delete
-# casino visits — handy for passing the phone around without risking a mistake.
-# Skip this command to keep a single password (everyone gets full access).
-npx wrangler secret put USER_PASSWORD
+# Auth0 secrets (REQUIRED — sign-in is Auth0 only). See "Sign-in (Auth0)" below
+# for where these come from. The Worker returns 503 until both are set.
+npx wrangler secret put AUTH0_DOMAIN     #   → your-tenant.us.auth0.com
+npx wrangler secret put AUTH0_AUDIENCE   #   → your API Identifier (audience)
 
 # Deploy — copy the printed https://...workers.dev URL
 npm run deploy
@@ -134,26 +128,25 @@ build step**, any static host works — pick one:
 - **Vercel / Netlify / any static host:** point it at the repo root, framework preset **Other/None**, no build command, output directory **/**.
 
 The frontend and the Worker API are separate origins (the Worker sends permissive
-CORS), so the static host and Cloudflare don't need to be the same provider. Open the
-resulting URL, enter your password, pick a mode, and you're live. **If you enable
-multi-user mode (below), set your Auth0 callback URLs to whichever domain(s) you deploy
-the frontend on.**
+CORS), so the static host and Cloudflare don't need to be the same provider. **Set your
+Auth0 callback URLs (next section) to whichever domain(s) you deploy the frontend on.**
+Open the resulting URL, sign in, pick a mode, and you're live.
 
 ### 3. (Optional) Custom domain
 Add it under your Pages project → **Custom domains**. Cloudflare provisions SSL automatically.
 
-### 4. (Optional) Multi-user accounts with Auth0
+### 4. Sign-in (Auth0) — required
 
-By default the app uses a single shared password (the data API is unauthenticated —
-fine for one trusted group on a shared device). To give each poker crew its **own
-private data behind real logins**, switch on multi-user mode. When it's off,
-everything works exactly as before.
+Sign-in is **Auth0 only** (there is no password fallback). Each user gets accounts +
+**per-group private data**; until it's configured the app shows a "not configured" notice
+and the Worker returns 503.
 
 1. **Create an Auth0 tenant** (free) → create a **Single Page Application** and an
    **API**. Note the SPA's *Domain* + *Client ID* and the API's *Identifier* (audience).
 2. In the SPA settings, add your site URL to **Allowed Callback URLs**, **Allowed Logout
-   URLs**, and **Allowed Web Origins** (e.g. `https://YOUR-APP.pages.dev`).
-3. **Worker secrets** — tell the API which tokens to trust:
+   URLs**, and **Allowed Web Origins** (e.g. `https://YOUR-APP.pages.dev` — every domain
+   you deploy the frontend on, plus `http://localhost:PORT` for local dev).
+3. **Worker secrets** — tell the API which tokens to trust (also done in step 1 above):
    ```bash
    cd worker
    npx wrangler secret put AUTH0_DOMAIN      # e.g. your-tenant.us.auth0.com
@@ -168,9 +161,9 @@ everything works exactly as before.
      audience: 'https://api.poker-tracker',   // must match AUTH0_AUDIENCE
    };
    ```
-5. Redeploy the frontend. The lock screen now shows **Sign in**; the first login
-   provisions a personal group, and group owners/admins can invite others
-   (`POST /api/invites` → share the code → `POST /api/invites/:code/accept`).
+5. Redeploy the frontend. The lock screen shows **Sign in**; the first login provisions a
+   personal group, and group owners/admins invite others from the in-app **Account** menu
+   (which generates a `?invite=CODE` link). Members can switch between groups there too.
 
 Social sign-in (GitHub, Google, …) is just an Auth0 dashboard toggle — no code change.
 For local development, put the two secrets in `worker/.dev.vars` (see
@@ -203,7 +196,7 @@ All deployment-specific values live in **`config.js`** (gitignored):
 | `API_BASE` | Your Worker URL + `/api` |
 | `CURRENCY` | Currency symbol shown throughout (`$`, `£`, `€`, `A$`, …) |
 | `DEFAULT_ROSTER` | Starter list of player names in the picker |
-| `AUTH0` | `null` for password mode, or `{ domain, clientId, audience }` to enable multi-user accounts (see step 4 above) |
+| `AUTH0` | **Required** `{ domain, clientId, audience }` for sign-in (see step 4 above); `null` shows a "not configured" screen |
 
 Other tweaks:
 - **Quick re-buy amount** — set in-app (persists per device), defaults to $20
@@ -214,7 +207,7 @@ Other tweaks:
 
 ## 🔐 Notes
 
-- The app password is verified server-side against the `LOCK_PASSWORD` Worker secret — it never appears in client code or the repo. An optional `USER_PASSWORD` secret enables a restricted "user" role: the lock screen accepts either password and the server returns the role, which the client uses to hide destructive actions (delete / re-open / remove / edit buy-in / force-balance / delete casino visit). This is mistake-prevention for a shared device, not a hard security boundary — the data API endpoints are unauthenticated.
+- Sign-in is **Auth0 only**: every `/api` route requires a verified Bearer token (RS256, checked against the tenant JWKS server-side in the Worker) and is scoped to the caller's group, so each crew's data is private. Identity is keyed solely by the Auth0 `sub` (accounts are never linked by email). The per-group role (owner/admin/member) drives which destructive actions (delete / re-open / remove / edit buy-in / force-balance / delete casino visit) are hidden.
 - All API writes are server-side validated (positive amounts, required fields, valid status).
 - Cloudflare D1 **Time Travel** gives 30-day point-in-time recovery out of the box.
 

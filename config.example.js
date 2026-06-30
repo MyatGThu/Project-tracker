@@ -22,11 +22,11 @@ const RANK_BADGES = {
   3: { icon: 'jester' },
 };
 
-// Multi-user accounts (optional). Leave as null for the original single-password
-// lock (the API stays unauthenticated). To switch on Auth0 sign-in + per-group
-// data ownership, fill in your Auth0 SPA app's domain + clientId and your API's
-// audience (all public, safe to commit), then set the AUTH0_DOMAIN and
-// AUTH0_AUDIENCE Worker secrets to the same domain/audience. See README.
+// Auth0 sign-in — REQUIRED. Fill in your Auth0 SPA app's domain + clientId and
+// your API's audience (all public, safe to commit), then set the AUTH0_DOMAIN
+// and AUTH0_AUDIENCE Worker secrets to the same domain/audience. There is no
+// password fallback: with this left null the app shows a "not configured"
+// screen. See README → "Sign-in (Auth0)".
 const AUTH0 = null;
 //   const AUTH0 = {
 //     domain:   'YOUR-TENANT.us.auth0.com',

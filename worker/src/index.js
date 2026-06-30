@@ -3,10 +3,10 @@
    Handles all CRUD for sessions, session_players, and buyins.
    Database: Cloudflare D1 (SQLite)
 
-   Multi-user (TODO Phase 1 + 2): when Auth0 is configured (AUTH0_DOMAIN +
-   AUTH0_AUDIENCE secrets), every /api route below requires a verified Bearer
-   token and is scoped to the caller's active group. When those secrets are
-   absent the API behaves exactly as the original single-shared-dataset app.
+   Auth is mandatory: every /api route requires a verified Auth0 Bearer token
+   and is scoped to the caller's active group. The AUTH0_DOMAIN + AUTH0_AUDIENCE
+   secrets must be set; without them the API returns 503 (not configured). The
+   former shared-password lock has been retired.
    ───────────────────────────────────────────────────────────── */
 
 import { authEnabled, authenticate } from './auth.js';
@@ -50,15 +50,11 @@ const INVITE_ROLES = ['admin', 'member'];   // 'owner' is never granted via invi
 // Canonical "this role has admin powers in its group" predicate (owner|admin).
 const isGroupAdmin = role => role === 'owner' || role === 'admin';
 
-// WHERE fragment that constrains a query to the caller's group. When gid is
-// null (auth disabled) it matches every row, preserving legacy behaviour.
-const groupFilter = (gid, col = 'group_id') =>
-  gid ? { clause: `${col} = ?`, args: [gid] } : { clause: '1 = 1', args: [] };
+// WHERE fragment that constrains a query to the caller's group.
+const groupFilter = (gid, col = 'group_id') => ({ clause: `${col} = ?`, args: [gid] });
 
 // Build an INSERT from a {column: value} map, skipping undefined values. Column
-// names are caller-supplied literals (never user input), values are bound. This
-// lets group_id be omitted entirely when auth is off, so the Worker still runs
-// against a database that predates the group_id column (password mode).
+// names are caller-supplied literals (never user input), values are bound.
 function insertRow(env, table, fields) {
   const cols = Object.keys(fields).filter(k => fields[k] !== undefined);
   const sql  = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
@@ -109,10 +105,8 @@ async function resolvePrincipal(request, env, claims) {
 }
 
 // Look up a single row's owning group_id via `sql` (one bind param: the id).
-// Returns true when the caller may touch it: always true when auth is off,
-// otherwise the row must exist and belong to the caller's group.
+// The caller may touch it only if the row exists and belongs to their group.
 async function ownsRow(env, gid, sql, id) {
-  if (!gid) return true;
   const row = await env.DB.prepare(sql).bind(id).first();
   return Boolean(row) && row.group_id === gid;
 }
@@ -133,46 +127,24 @@ export default {
 
     if (method === 'OPTIONS') return new Response(null, { headers: CORS });
 
-    // Legacy password lock — runs before the auth gate so it stays reachable.
-    // Only meaningful when Auth0 is NOT configured; ignored by the Auth0 client.
-    if (path === '/api/auth' && method === 'POST') {
-      try {
-        const { password } = await request.json();
-        if (password && password === env.LOCK_PASSWORD) {
-          return ok({ success: true, role: 'admin' });
-        }
-        if (password && env.USER_PASSWORD && password === env.USER_PASSWORD) {
-          return ok({ success: true, role: 'user' });
-        }
-        await new Promise(r => setTimeout(r, 800));
-        return err('Incorrect password', 401);
-      } catch (e) {
-        return err(e.message);
-      }
-    }
-
     await env.DB.exec('PRAGMA foreign_keys = ON');
 
-    // ── Auth gate ──────────────────────────────────────────────────
-    // With Auth0 configured, every remaining route requires a valid token and
-    // is scoped to ctx.groupId. Without it, ctx is null and gid stays null,
-    // so the group filters below match all rows (original behaviour).
-    let ctx = null;
-    if (authEnabled(env)) {
-      let claims;
-      try { claims = await authenticate(request, env); }
-      catch { return err('Unauthorized', 401); }
-      try { ctx = await resolvePrincipal(request, env, claims); }
-      catch (e) { return err(e.message); }
-    }
-    const gid = ctx?.groupId ?? null;
+    // ── Auth gate (mandatory) ──────────────────────────────────────
+    // Every route requires a valid Auth0 token and is scoped to ctx.groupId.
+    if (!authEnabled(env)) return err('Authentication is not configured', 503);
+    let claims;
+    try { claims = await authenticate(request, env); }
+    catch { return err('Unauthorized', 401); }
+    let ctx;
+    try { ctx = await resolvePrincipal(request, env, claims); }
+    catch { return err('Could not resolve account', 500); }
+    const gid = ctx.groupId;
 
     try {
 
       /* ── GET /api/me ───────────────────────────────────────────
          The signed-in user + their groups + active group           */
       if (path === '/api/me' && method === 'GET') {
-        if (!ctx) return err('Authentication is not enabled', 404);
         const { results: groups } = await env.DB.prepare(
           `SELECT g.id, g.name, gm.role
            FROM   group_members gm
@@ -192,7 +164,6 @@ export default {
       /* ── POST /api/invites ─────────────────────────────────────
          Create an invite code for the caller's active group         */
       if (path === '/api/invites' && method === 'POST') {
-        if (!ctx) return err('Authentication is not enabled', 404);
         if (!isGroupAdmin(ctx.role))
           return err('Only group owners or admins can invite', 403);
         const body = await request.json().catch(() => ({}));
@@ -209,7 +180,6 @@ export default {
          Join the invite's group as the signed-in user              */
       const inviteAccept = path.match(/^\/api\/invites\/([^/]+)\/accept$/);
       if (inviteAccept && method === 'POST') {
-        if (!ctx) return err('Authentication is not enabled', 404);
         const invite = await env.DB.prepare('SELECT * FROM invites WHERE code = ?')
           .bind(inviteAccept[1]).first();
         if (!invite)             return err('Invite not found', 404);
@@ -280,7 +250,7 @@ export default {
         if (created_at !== undefined && !isDateStr(created_at)) return err('Invalid date', 400);
         const id = crypto.randomUUID();
         await insertRow(env, 'sessions', {
-          id, name, status: 'active', group_id: gid ?? undefined, created_at: created_at || undefined,
+          id, name, status: 'active', group_id: gid, created_at: created_at || undefined,
         });
         return ok(await env.DB.prepare('SELECT * FROM sessions WHERE id = ?').bind(id).first());
       }
@@ -524,7 +494,7 @@ export default {
           cash_out:   cash_out ?? null,
           games:      games ?? '',
           notes:      notes ?? null,
-          group_id:   gid ?? undefined,
+          group_id:   gid,
           created_at: created_at || undefined,
         });
         return ok(await env.DB.prepare('SELECT * FROM casino_visits WHERE id = ?').bind(id).first());

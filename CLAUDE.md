@@ -14,12 +14,11 @@ npx vitest run -t "force-balance"          # a single test by name
 cd worker && npm install
 npx wrangler dev            # local API on http://localhost:8787
 npm run deploy              # = wrangler deploy
-npx wrangler d1 execute poker-tracker --remote --file schema.sql   # fresh DB: full schema
+npx wrangler d1 execute poker-tracker --remote --file schema.sql   # fresh DB: full schema (group_id NOT NULL)
 npx wrangler d1 execute poker-tracker --remote --file migrations/0001_multitenant.sql  # existing DB: add multi-tenant tables (run once)
-npx wrangler secret put LOCK_PASSWORD        # admin password (server-side only)
-npx wrangler secret put USER_PASSWORD        # optional restricted role
-npx wrangler secret put AUTH0_DOMAIN         # multi-user mode: Auth0 tenant domain
-npx wrangler secret put AUTH0_AUDIENCE       # multi-user mode: API identifier (audience)
+npx wrangler d1 execute poker-tracker --remote --file migrations/0002_group_required.sql  # existing DB: backfill + make group_id NOT NULL (run once, after 0001)
+npx wrangler secret put AUTH0_DOMAIN         # REQUIRED: Auth0 tenant domain
+npx wrangler secret put AUTH0_AUDIENCE       # REQUIRED: API identifier (audience)
 
 # Frontend — static files, NO build step
 npx wrangler pages deploy .                  # direct upload, or connect Git in CF dashboard
@@ -38,16 +37,15 @@ Three layers, deliberately framework-free:
 ### Frontend view system
 `app.js` drives a single-page app via `show(viewId, dir)` which toggles `.view.active` on the `#view-*` divs in `index.html`. There is no router and no components — everything is global functions + `innerHTML`. The two product modes (**Home Game** and **Casino**) are just different sets of views switched from a mode selector. Data is fetched through the single `api(path, method, body)` helper, which guards against a missing/placeholder `API_BASE`.
 
-### Auth — two modes, config-gated
-The app has **two distinct auth modes**, selected by whether `AUTH0` is set in `config.js`:
+### Auth — Auth0 only (mandatory)
+Sign-in is **Auth0 only**; the former shared-password lock has been retired. Every `/api` route requires a verified Bearer token (RS256/JWKS, verified in `worker/src/auth.js`) and is **scoped to the caller's active group**. The `AUTH0_DOMAIN` + `AUTH0_AUDIENCE` Worker secrets must be set — without them the Worker returns **503** (`authEnabled(env)` is the config guard, checked once at the top of `fetch`). The client requires the `AUTH0` block in `config.js`; without it the lock screen shows a "not configured" notice.
 
-- **Password mode (default).** The lock screen POSTs to `/api/auth`; the Worker compares against `LOCK_PASSWORD` / `USER_PASSWORD` and returns `{ role: 'admin' | 'user' }`. The client stores it in `sessionStorage` (`getRole()` / `isAdmin()`) and hides destructive actions for `user`. **The data API endpoints are unauthenticated** — anyone with the Worker URL can read/write. A shared-device guardrail, not a security boundary.
-- **Multi-user mode (TODO Phase 2).** When the `AUTH0_DOMAIN` + `AUTH0_AUDIENCE` Worker secrets *and* the `AUTH0` `config.js` block are both set, every `/api` route requires a verified Bearer token (RS256/JWKS, verified in `worker/src/auth.js`) and is **scoped to the caller's active group**. `authEnabled(env)` is the server switch; `authMode()` is the client switch. First login auto-provisions a `users` row + a personal `groups` row (owner). The active group is the `X-Group-Id` header (when the caller is a member) else their oldest membership. The per-group role maps onto the existing `isAdmin()` gating (owner/admin → admin, member → user), so destructive-action hiding is reused unchanged.
+First login auto-provisions a `users` row + a personal `groups` row (owner). The active group is the `X-Group-Id` header (when the caller is a member) else their oldest membership. The per-group role maps onto the existing `isAdmin()` gating via one predicate each side — `isGroupAdmin(role)` (server) / `roleIsAdmin(role)` (client), owner/admin → admin, member → user — so destructive-action hiding is reused unchanged.
 
-**Both modes share one rule: when Auth0 is not configured the API behaves exactly as the original single-shared-dataset app** (group columns stay NULL, no scoping). Keep this fall-through intact when adding endpoints — wrap group checks in `if (gid)` / use the `groupFilter` + `ownsRow` helpers. The auth + scoping paths are covered by `worker/auth.test.js` and `worker/integration.test.js` (the latter runs the real handler against `node:sqlite`).
+`gid` is always set on the server; scope reads with `groupFilter(gid)` and gate writes with `ownsRow(...)` (cross-group → 404). The auth + scoping paths are covered by `worker/auth.test.js` and `worker/integration.test.js` (the latter runs the real handler against `node:sqlite`). Identity is keyed solely by the Auth0 `sub` — never link accounts by email (see `resolvePrincipal`).
 
 ### Data model & money flow
-`sessions → session_players → buyins` (FK `ON DELETE CASCADE`); `casino_visits` is standalone. Multi-tenant tables `groups`, `users`, `group_members`, `invites` sit alongside; `sessions` and `casino_visits` each carry a **nullable** `group_id` (NULL = legacy/password-mode rows). Settlement is **final-chips driven**: each `session_players.final_chips` minus that player's summed buy-ins = their net; `settlement.js` turns the net vector into minimal "who pays whom" transactions, with a force-balance step that fairly spreads any chip-count discrepancy. **`settlement.js` is the trust-critical core and is fully unit-tested — never change its math without keeping `settlement.test.js` green.**
+`sessions → session_players → buyins` (FK `ON DELETE CASCADE`); `casino_visits` is standalone. Multi-tenant tables `groups`, `users`, `group_members`, `invites` sit alongside; `sessions` and `casino_visits` each carry a **`NOT NULL` `group_id`** (every row belongs to a group; migration 0002 backfilled any legacy NULLs). Settlement is **final-chips driven**: each `session_players.final_chips` minus that player's summed buy-ins = their net; `settlement.js` turns the net vector into minimal "who pays whom" transactions, with a force-balance step that fairly spreads any chip-count discrepancy. **`settlement.js` is the trust-critical core and is fully unit-tested — never change its math without keeping `settlement.test.js` green.**
 
 ### Worker write-safety
 PATCH bodies are filtered through `ALLOWED_FIELDS` (per-table column whitelist) before column names are ever interpolated into SQL — user input can't inject column names. Every write is guarded by the `isStr` / `isPos` / `isMoneyOrNull` / `isDateStr` predicates. Keep both patterns when adding endpoints.
@@ -58,5 +56,5 @@ PATCH bodies are filtered through `ALLOWED_FIELDS` (per-table column whitelist) 
 - **Accessibility cues are intentional, keep them.** Win/loss is never color-only: `▲`/`▼` pseudo-element cues (WCAG 1.4.1) live in `style.css`; secondary text uses the `--muted` token which is tuned to clear WCAG AA (≥4.5:1) on all surfaces — don't darken it.
 - **Reduced motion is global.** A `@media (prefers-reduced-motion: reduce)` damper near-zeroes every animation; new animations inherit it automatically, so don't add per-animation opt-outs.
 - **Dashboard records logic lives in `loadDashboard()`** (highest earnings, win/loss streaks via `longestStreaks()`, highest pot, "Person in Hell"), with the fire/ember effects (`embersHTML()` + `.rock-bottom` CSS) applied to the last-place cards.
-- **`config.js` is committed and holds no secrets** (`API_BASE`, `CURRENCY`, `DEFAULT_ROSTER`, `RANK_BADGES`, and the optional `AUTH0` block). The `AUTH0` `domain`/`clientId`/`audience` are public client values (safe to commit); passwords and the `AUTH0_*` server secrets only ever exist as Worker secrets.
+- **`config.js` is committed and holds no secrets** (`API_BASE`, `CURRENCY`, `DEFAULT_ROSTER`, `RANK_BADGES`, and the **required** `AUTH0` block). The `AUTH0` `domain`/`clientId`/`audience` are public client values (safe to commit); the `AUTH0_*` server secrets only ever exist as Worker secrets. With `AUTH0` unset the app shows a "not configured" screen — there is no password fallback.
 - **Vendored skills under `.claude/skills/` are intentionally tracked** (`.gitignore` ignores `.claude/*` except `skills/`).

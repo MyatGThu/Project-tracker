@@ -20,9 +20,9 @@ const RANK_BADGES = {
   3: { icon: 'jester' },
 };
 
-// Multi-user accounts (optional). Leave null to keep the shared-password lock.
-// To enable Auth0 sign-in + per-group data, set all three (public values, safe
-// to commit). The matching Worker secrets are AUTH0_DOMAIN + AUTH0_AUDIENCE.
-// See README → "Multi-user mode (optional)".
+// Auth0 sign-in (REQUIRED — there is no password fallback). Set all three
+// (public values, safe to commit); the matching Worker secrets are
+// AUTH0_DOMAIN + AUTH0_AUDIENCE. With this left null the app shows a
+// "not configured" screen. See README → "Sign-in (Auth0)".
 //   const AUTH0 = { domain: 'YOUR.us.auth0.com', clientId: 'abc123', audience: 'https://api.poker-tracker' };
 const AUTH0 = null;

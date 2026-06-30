@@ -57,11 +57,12 @@ not just priority — earlier phases unblock later ones.
 - [x] **Multi-user UX:** Account modal with in-app group switcher (uses `X-Group-Id` +
       `/api/me`), invite-link generation, `?invite=CODE` redemption (preserved across the
       Auth0 redirect), and a sign-out control. Buttons stay hidden in password mode.
-- [ ] **Retire the password path** (decided): once accounts are in real use, remove the
-      password lock + `/api/auth` + `LOCK_PASSWORD`/`USER_PASSWORD` so Auth0 is the only
-      way in. Deferred until after a deployment has run on accounts.
-- [ ] **Optional Phase 1 backfill** (skipped for now — current data is disposable): a
-      default group + `NOT NULL` on `group_id` once a deployment has data worth migrating.
+- [x] **Retire the password path**: removed the password lock screen, `/api/auth`, and
+      the `LOCK_PASSWORD`/`USER_PASSWORD` secrets. Auth0 is the only way in; the Worker
+      returns 503 and the client shows a "not configured" notice until `AUTH0` is set.
+- [x] **Close out Phase 1 — `group_id` is now `NOT NULL`.** `schema.sql` enforces it for
+      fresh DBs; `migration 0002_group_required.sql` parks any legacy NULL rows in a
+      default "Legacy (unassigned)" group, then rebuilds both tables with the constraint.
 
 ## Phase 3 — Hosting (optional: Azure free tier)
 

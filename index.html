@@ -103,18 +103,16 @@
         <span class="lock-suit">♠</span>
         <h1 class="lock-title">Poker Tracker</h1>
       </div>
-      <p class="lock-subtitle">Enter password to continue</p>
-      <!-- Password lock (default). Hidden by app.js when Auth0 mode is on. -->
-      <div class="lock-form" id="lock-form-password">
-        <input id="lock-password" type="password" placeholder="Password"
-               class="input lock-input" autocomplete="off" />
-        <button id="lock-submit" class="btn btn-primary lock-btn">Unlock</button>
-      </div>
-      <!-- Auth0 sign-in (shown only when config.js defines AUTH0). -->
-      <div class="lock-form hidden" id="lock-form-auth0">
+      <p class="lock-subtitle">Sign in to continue</p>
+      <!-- Auth0 sign-in — the only way in. -->
+      <div class="lock-form" id="lock-form-auth0">
         <button id="lock-auth0-btn" class="btn btn-primary lock-btn">Sign in</button>
       </div>
-      <p id="lock-error" class="lock-error hidden">Incorrect password</p>
+      <!-- Shown when config.js has no AUTH0 block (sign-in can't work yet). -->
+      <p id="lock-unconfigured" class="lock-error hidden">
+        Auth0 isn’t configured. Set the <code>AUTH0</code> block in <code>config.js</code> to enable sign-in.
+      </p>
+      <p id="lock-error" class="lock-error hidden"></p>
     </div>
   </div>
 

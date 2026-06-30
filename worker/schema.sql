@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   name        TEXT NOT NULL,
   status      TEXT NOT NULL DEFAULT 'active',   -- 'active' | 'settled'
   notes       TEXT,
-  group_id    TEXT REFERENCES groups(id),       -- nullable: legacy rows have none
+  group_id    TEXT NOT NULL REFERENCES groups(id),   -- every session belongs to a group
   created_at  TEXT DEFAULT (datetime('now'))
 );
 
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS casino_visits (
   cash_out    REAL,
   games       TEXT DEFAULT '',
   notes       TEXT,
-  group_id    TEXT REFERENCES groups(id),       -- nullable: legacy rows have none
+  group_id    TEXT NOT NULL REFERENCES groups(id),   -- every visit belongs to a group
   created_at  TEXT DEFAULT (datetime('now'))
 );
 
