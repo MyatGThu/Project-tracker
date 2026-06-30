@@ -57,10 +57,15 @@ async function setupKeys() {
   publicJwk.use = 'sig';
 }
 
-async function token(sub, email, name) {
+async function token(sub, email, name, { emailVerified } = {}) {
   const now = Math.floor(Date.now() / 1000);
   const h = seg({ alg: 'RS256', typ: 'JWT', kid });
-  const p = seg({ iss: ISSUER, aud: AUDIENCE, sub, email, name, iat: now, exp: now + 3600 });
+  const payload = { iss: ISSUER, aud: AUDIENCE, sub, iat: now, exp: now + 3600 };
+  if (email !== undefined) payload.email = email;
+  if (name  !== undefined) payload.name  = name;
+  // Default: a present email is verified (matches a normal Auth0 setup).
+  payload.email_verified = emailVerified ?? (email !== undefined);
+  const p = seg(payload);
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', kp.privateKey, enc.encode(`${h}.${p}`));
   return `${h}.${p}.${b64url(sig)}`;
 }
@@ -144,6 +149,28 @@ describe('Worker — auth enabled (multi-tenant)', () => {
     expect(me.status).toBe(200);
     expect(me.json.group).toBeTruthy();
     expect(me.json.group.role).toBe('owner');
+  });
+
+  it('does NOT link two identities that share an email (account-takeover guard)', async () => {
+    // Same email, two different Auth0 subjects → two separate accounts/groups.
+    const aTok = await token('auth0|First',  'shared@x.com', 'First');
+    const bTok = await token('auth0|Second', 'shared@x.com', 'Second');
+
+    const aMe = await call('GET', '/api/me', { tok: aTok });
+    await call('POST', '/api/sessions', { body: { name: 'First night' }, tok: aTok });
+
+    const bMe = await call('GET', '/api/me', { tok: bTok });
+    expect(bMe.json.group.id).not.toBe(aMe.json.group.id);          // distinct group
+    expect(bMe.json.groups).toHaveLength(1);                        // not inheriting First's groups
+    expect((await call('GET', '/api/sessions', { tok: bTok })).json).toHaveLength(0); // can't see First's data
+  });
+
+  it('ignores an unverified email claim (not stored)', async () => {
+    const tok = await token('auth0|Unverified', 'spoof@x.com', 'Mallory', { emailVerified: false });
+    const me = await call('GET', '/api/me', { tok });
+    expect(me.status).toBe(200);
+    expect(me.json.email).toBeNull();
+    expect(me.json.group).toBeTruthy();
   });
 
   it('isolates data between groups and blocks cross-group writes', async () => {

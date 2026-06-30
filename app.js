@@ -161,7 +161,12 @@ function toast(msg, type = 'info', duration = 3200) {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span class="toast-msg">${msg}</span>`;
+  // textContent, not innerHTML: messages can carry server/user-derived strings
+  // (group names, error text), so never interpret them as HTML.
+  const span = document.createElement('span');
+  span.className = 'toast-msg';
+  span.textContent = msg;
+  el.appendChild(span);
   container.appendChild(el);
   const remove = () => {
     el.style.transition = 'opacity 0.25s, transform 0.25s';
@@ -177,7 +182,13 @@ function toastUndo(msg, undoFn, duration = 5000) {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
   el.className = 'toast info';
-  el.innerHTML = `<span class="toast-msg">${msg}</span><button class="toast-undo">Undo</button>`;
+  const span = document.createElement('span');
+  span.className = 'toast-msg';
+  span.textContent = msg;                       // text, not HTML (see toast())
+  const undoBtn = document.createElement('button');
+  undoBtn.className = 'toast-undo';
+  undoBtn.textContent = 'Undo';
+  el.append(span, undoBtn);
   container.appendChild(el);
   let acted = false;
   const remove = () => {

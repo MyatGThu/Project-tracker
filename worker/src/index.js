@@ -57,22 +57,22 @@ const groupFilter = (gid, col = 'group_id') =>
    the active group — the X-Group-Id header when the caller is a member of it,
    otherwise their oldest membership. */
 async function resolvePrincipal(request, env, claims) {
-  const sub   = claims.sub;
-  const email = typeof claims.email === 'string' ? claims.email : null;
-  const name  = claims.name || claims.nickname || email || 'Player';
+  const sub = claims.sub;
+  // `sub` is the SOLE identity key. We never link accounts by email: doing so
+  // would let an unverified or second identity that presents a matching email
+  // adopt another user's row and inherit their groups. Email is only trusted
+  // (and stored) when the provider marks it verified, and is purely cosmetic.
+  const verified = claims.email_verified === true;
+  const email    = verified && typeof claims.email === 'string' ? claims.email : null;
+  const name     = claims.name || claims.nickname || email || 'Player';
 
   let user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
   if (!user) {
-    try {
-      await env.DB.prepare('INSERT INTO users (id, email, name) VALUES (?, ?, ?)')
-        .bind(sub, email, name).run();
-    } catch (e) {
-      // users.email is UNIQUE: tolerate the same person arriving via a second
-      // identity provider by reusing the existing row.
-      if (email) user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
-      if (!user) throw e;
-    }
-    user ||= await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
+    // OR IGNORE: if two first-time requests for the same sub race, the second
+    // no-ops on the PK instead of throwing; we re-read either way.
+    await env.DB.prepare('INSERT OR IGNORE INTO users (id, email, name) VALUES (?, ?, ?)')
+      .bind(sub, email, name).run();
+    user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
   }
   const userId = user.id;
 
