@@ -47,10 +47,23 @@ const isDateStr     = v => typeof v === 'string' && !Number.isNaN(Date.parse(v))
 // ── Group scoping helpers ─────────────────────────────────────────
 const INVITE_ROLES = ['admin', 'member'];   // 'owner' is never granted via invite
 
+// Canonical "this role has admin powers in its group" predicate (owner|admin).
+const isGroupAdmin = role => role === 'owner' || role === 'admin';
+
 // WHERE fragment that constrains a query to the caller's group. When gid is
 // null (auth disabled) it matches every row, preserving legacy behaviour.
 const groupFilter = (gid, col = 'group_id') =>
   gid ? { clause: `${col} = ?`, args: [gid] } : { clause: '1 = 1', args: [] };
+
+// Build an INSERT from a {column: value} map, skipping undefined values. Column
+// names are caller-supplied literals (never user input), values are bound. This
+// lets group_id be omitted entirely when auth is off, so the Worker still runs
+// against a database that predates the group_id column (password mode).
+function insertRow(env, table, fields) {
+  const cols = Object.keys(fields).filter(k => fields[k] !== undefined);
+  const sql  = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
+  return env.DB.prepare(sql).bind(...cols.map(k => fields[k])).run();
+}
 
 /* Resolve the authenticated principal: upsert the user, ensure they belong to
    at least one group (provisioning a personal one on first login), and choose
@@ -180,7 +193,7 @@ export default {
          Create an invite code for the caller's active group         */
       if (path === '/api/invites' && method === 'POST') {
         if (!ctx) return err('Authentication is not enabled', 404);
-        if (ctx.role !== 'owner' && ctx.role !== 'admin')
+        if (!isGroupAdmin(ctx.role))
           return err('Only group owners or admins can invite', 403);
         const body = await request.json().catch(() => ({}));
         const role = INVITE_ROLES.includes(body.role) ? body.role : 'member';
@@ -266,15 +279,9 @@ export default {
         if (!isStr(name)) return err('Session name is required', 400);
         if (created_at !== undefined && !isDateStr(created_at)) return err('Invalid date', 400);
         const id = crypto.randomUUID();
-        if (created_at) {
-          await env.DB.prepare(
-            'INSERT INTO sessions (id, name, status, group_id, created_at) VALUES (?, ?, ?, ?, ?)'
-          ).bind(id, name, 'active', gid, created_at).run();
-        } else {
-          await env.DB.prepare(
-            'INSERT INTO sessions (id, name, status, group_id) VALUES (?, ?, ?, ?)'
-          ).bind(id, name, 'active', gid).run();
-        }
+        await insertRow(env, 'sessions', {
+          id, name, status: 'active', group_id: gid ?? undefined, created_at: created_at || undefined,
+        });
         return ok(await env.DB.prepare('SELECT * FROM sessions WHERE id = ?').bind(id).first());
       }
 
@@ -512,15 +519,14 @@ export default {
         if (cash_out !== undefined && !isMoneyOrNull(cash_out)) return err('Cash-out must be zero or more', 400);
         if (created_at !== undefined && !isDateStr(created_at)) return err('Invalid date', 400);
         const id = crypto.randomUUID();
-        if (created_at) {
-          await env.DB.prepare(
-            'INSERT INTO casino_visits (id, casino_name, buy_in, cash_out, games, notes, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-          ).bind(id, casino_name, buy_in, cash_out ?? null, games ?? '', notes ?? null, gid, created_at).run();
-        } else {
-          await env.DB.prepare(
-            'INSERT INTO casino_visits (id, casino_name, buy_in, cash_out, games, notes, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
-          ).bind(id, casino_name, buy_in, cash_out ?? null, games ?? '', notes ?? null, gid).run();
-        }
+        await insertRow(env, 'casino_visits', {
+          id, casino_name, buy_in,
+          cash_out:   cash_out ?? null,
+          games:      games ?? '',
+          notes:      notes ?? null,
+          group_id:   gid ?? undefined,
+          created_at: created_at || undefined,
+        });
         return ok(await env.DB.prepare('SELECT * FROM casino_visits WHERE id = ?').bind(id).first());
       }
 

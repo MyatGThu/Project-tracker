@@ -112,6 +112,17 @@ describe('Worker — auth disabled (legacy single dataset)', () => {
     expect(visits.json).toHaveLength(1);
     expect(visits.json[0].casino_name).toBe('Crown');
   });
+
+  it('still accepts writes on a pre-migration DB (no group_id column)', async () => {
+    // The new Worker must not break a deployment that ran the OLD schema and
+    // never applied migration 0001 — in password mode it omits group_id entirely.
+    const oldDb = new DatabaseSync(':memory:');
+    oldDb.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', notes TEXT, created_at TEXT DEFAULT (datetime('now')));`);
+    oldDb.exec(`CREATE TABLE casino_visits (id TEXT PRIMARY KEY, casino_name TEXT NOT NULL DEFAULT 'Casino', buy_in REAL NOT NULL, cash_out REAL, games TEXT DEFAULT '', notes TEXT, created_at TEXT DEFAULT (datetime('now')));`);
+    env = { DB: makeD1(oldDb) };
+    expect((await call('POST', '/api/sessions',      { body: { name: 'Legacy' } })).status).toBe(200);
+    expect((await call('POST', '/api/casino/visits', { body: { casino_name: 'Crown', buy_in: 50 } })).status).toBe(200);
+  });
 });
 
 describe('Worker — auth enabled (multi-tenant)', () => {

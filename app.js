@@ -18,6 +18,21 @@ const authMode = () => (AUTH0_CFG ? 'auth0' : 'password');
 let _auth0Client  = null;                                  // Auth0 SPA client
 let activeGroupId = localStorage.getItem('poker_group') || null;
 
+// The app's own base URL — used for the Auth0 redirect_uri, invite links, and
+// logout return, kept in one place so they can never drift apart.
+const appBaseUrl = () => location.origin + location.pathname;
+
+// Single source of truth for the active group (in-memory + persisted).
+function setActiveGroup(id) {
+  activeGroupId = id || null;
+  if (id) localStorage.setItem('poker_group', id);
+  else    localStorage.removeItem('poker_group');
+}
+
+// Map a per-group membership role onto the app's admin/user gating
+// (owner|admin → admin, member → user). One canonical predicate.
+const roleIsAdmin = role => role === 'owner' || role === 'admin';
+
 async function authToken() {
   if (authMode() !== 'auth0' || !_auth0Client) return null;
   try { return await _auth0Client.getTokenSilently(); }   // cached + auto-refreshed
@@ -2958,7 +2973,7 @@ async function initAuth0() {
     clientId: AUTH0_CFG.clientId,
     authorizationParams: {
       audience:     AUTH0_CFG.audience,
-      redirect_uri: window.location.origin + window.location.pathname,
+      redirect_uri: appBaseUrl(),
     },
     cacheLocation:   'localstorage',
     useRefreshTokens: true,
@@ -2979,10 +2994,8 @@ async function syncIdentity() {
   const { data } = await api('/me');
   if (!data) return false;
   if (data.group) {
-    activeGroupId = data.group.id;
-    localStorage.setItem('poker_group', activeGroupId);
-    const r = data.group.role;
-    sessionStorage.setItem('poker_role', (r === 'owner' || r === 'admin') ? 'admin' : 'user');
+    setActiveGroup(data.group.id);
+    sessionStorage.setItem('poker_role', roleIsAdmin(data.group.role) ? 'admin' : 'user');
   }
   return true;
 }
@@ -3039,7 +3052,7 @@ async function openAccountModal() {
     wrap.appendChild(btn);
   }
 
-  const canInvite = data.group && (data.group.role === 'owner' || data.group.role === 'admin');
+  const canInvite = data.group && roleIsAdmin(data.group.role);
   document.getElementById('account-invite-wrap').classList.toggle('hidden', !canInvite);
   const out = document.getElementById('account-invite-out');
   out.classList.add('hidden'); out.value = '';
@@ -3048,13 +3061,12 @@ async function openAccountModal() {
 }
 
 async function switchGroup(id) {
-  activeGroupId = id;
-  localStorage.setItem('poker_group', id);
+  setActiveGroup(id);
   document.getElementById('modal-account').classList.add('hidden');
   await syncIdentity();                                   // refresh role for the new group
   document.body.classList.toggle('role-user', !isAdmin());
-  loadDashboard();
   loadRoster();
+  loadDashboard();                                        // home dashboard is always kept warm
   if (currentMode === 'casino') loadCasinoDashboard();
   toast('Switched group', 'success');
 }
@@ -3065,7 +3077,7 @@ async function generateInvite() {
   const { data, error } = await api('/invites', 'POST', { role: 'member' });
   btn.disabled = false; btn.textContent = 'Create invite link';
   if (!data || !data.code) { toast(error?.message || 'Could not create invite', 'error'); return; }
-  const link = `${location.origin}${location.pathname}?invite=${data.code}`;
+  const link = `${appBaseUrl()}?invite=${data.code}`;
   const out = document.getElementById('account-invite-out');
   out.value = link; out.classList.remove('hidden'); out.focus(); out.select();
   try { await navigator.clipboard.writeText(link); toast('Invite link copied', 'success'); }
@@ -3073,11 +3085,11 @@ async function generateInvite() {
 }
 
 async function signOut() {
-  localStorage.removeItem('poker_group');
+  setActiveGroup(null);
   sessionStorage.removeItem('poker_role');
-  activeGroupId = null;
+  sessionStorage.removeItem('poker_auth');
   if (_auth0Client) {
-    try { await _auth0Client.logout({ logoutParams: { returnTo: location.origin + location.pathname } }); return; }
+    try { await _auth0Client.logout({ logoutParams: { returnTo: appBaseUrl() } }); return; }
     catch (e) { console.warn(e); }
   }
   location.reload();
@@ -3090,11 +3102,14 @@ async function maybeAcceptInvite() {
             || new URLSearchParams(location.search).get('invite');
   if (!code) return;
   sessionStorage.removeItem('pending_invite');
-  const { data } = await api(`/invites/${encodeURIComponent(code)}/accept`, 'POST');
+  const { data, error } = await api(`/invites/${encodeURIComponent(code)}/accept`, 'POST');
   if (data && data.group) {
-    activeGroupId = data.group.id;
-    localStorage.setItem('poker_group', activeGroupId);
+    setActiveGroup(data.group.id);
     toast(`Joined ${data.group.name}`, 'success');
+  } else {
+    // Expired / already-used / invalid code — tell the user instead of
+    // silently leaving them in their own group thinking they joined.
+    toast(error?.message || 'That invite link is no longer valid', 'error', 5000);
   }
   const url = new URL(location.href);
   if (url.searchParams.has('invite')) {
